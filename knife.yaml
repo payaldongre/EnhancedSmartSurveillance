@@ -1,0 +1,10 @@
+path: r"D:\EnhancedSmartSurveillance\dataset\train\images\knife_01.jpg"
+train: train/images
+val: val/images
+test: test/images
+
+nc: 1   # number of classes
+names: ["knife"]
+
+nc: 4
+names: ['knife', 'handgun', 'fork', 'scissors']

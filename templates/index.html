@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Surveillance System - AI-Powered Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 50%, #1e3c72 100%);
+            color: white;
+            min-height: 100vh;
+            animation: backgroundShift 10s ease-in-out infinite;
+        }
+        
+        @keyframes backgroundShift {
+            0%, 100% { background: linear-gradient(135deg, #1e3c72 0%, #2a5298 50%, #1e3c72 100%); }
+            50% { background: linear-gradient(135deg, #2a5298 0%, #1e3c72 50%, #2a5298 100%); }
+        }
+        
+        .header {
+            background: rgba(0, 0, 0, 0.9);
+            padding: 1.5rem;
+            text-align: center;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            border-bottom: 3px solid #4ECDC4;
+        }
+        
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(45deg, #4ECDC4, #44A08D);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1rem;
+            margin-bottom: 0.3rem;
+        }
+        
+        .features-banner {
+            background: linear-gradient(90deg, #FF6B6B, #4ECDC4, #45B7D1, #96CEB4);
+            background-size: 400% 400%;
+            animation: gradientFlow 3s ease infinite;
+            padding: 0.8rem;
+            text-align: center;
+            font-weight: bold;
+        }
+        
+        @keyframes gradientFlow {
+            0%, 100% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+        }
+        
+        .container {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 1.5rem;
+            padding: 1.5rem;
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+        
+        .video-section {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            padding: 2rem;
+            backdrop-filter: blur(15px);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .video-section h2 {
+            margin-bottom: 1.5rem;
+            font-size: 1.8rem;
+            display: flex;
+            align-items: center;
+        }
+        
+        .status-indicator {
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            background: #4CAF50;
+            margin-right: 0.8rem;
+            animation: pulse 2s infinite;
+            box-shadow: 0 0 10px #4CAF50;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.7; transform: scale(1.1); }
+            100% { opacity: 1; transform: scale(1); }
+        }
+        
+        #video-feed {
+            width: 100%;
+            border-radius: 15px;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+            border: 2px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .controls {
+            margin-top: 1.5rem;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+        }
+        
+        .btn {
+            background: linear-gradient(45deg, #FF6B6B, #4ECDC4);
+            border: none;
+            color: white;
+            padding: 1rem 1.5rem;
+            border-radius: 30px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+        
+        .btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+            background: linear-gradient(45deg, #4ECDC4, #FF6B6B);
+        }
+        
+        .btn:active {
+            transform: translateY(-1px);
+        }
+        
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+        
+        .stats-card, .alerts-card, .behavior-card, .weapons-card {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            padding: 2rem;
+            backdrop-filter: blur(15px);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .card-title {
+            font-size: 1.4rem;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+        
+        .stat-item {
+            text-align: center;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 1.5rem;
+            border-radius: 15px;
+            transition: transform 0.3s ease;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .stat-item:hover {
+            transform: translateY(-2px);
+            background: rgba(255, 255, 255, 0.15);
+        }
+        
+        .stat-value {
+            font-size: 2.2rem;
+            font-weight: bold;
+            background: linear-gradient(45deg, #4ECDC4, #44A08D);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 0.5rem;
+        }
+        
+        .stat-label {
+            font-size: 0.9rem;
+            opacity: 0.9;
+        }
+        
+        .alerts-list, .behavior-list, .weapons-list {
+            max-height: 350px;
+            overflow-y: auto;
+            margin-top: 1rem;
+        }
+        
+        .alert-item, .behavior-item, .weapon-item {
+            background: rgba(255, 0, 0, 0.15);
+            border-left: 4px solid #FF6B6B;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            border-radius: 10px;
+            animation: slideIn 0.5s ease;
+            transition: all 0.3s ease;
+        }
+        
+        .behavior-item {
+            background: rgba(0, 255, 255, 0.15);
+            border-left-color: #4ECDC4;
+        }
+        
+        .weapon-item {
+            background: rgba(255, 165, 0, 0.15);
+            border-left-color: #FFA500;
+        }
+        
+        .alert-item:hover, .behavior-item:hover, .weapon-item:hover {
+            transform: translateX(5px);
+            background: rgba(255, 0, 0, 0.25);
+        }
+        
+        .behavior-item:hover {
+            background: rgba(0, 255, 255, 0.25);
+        }
+        
+        .weapon-item:hover {
+            background: rgba(255, 165, 0, 0.25);
+        }
+        
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-100%);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+        
+        .alert-time, .behavior-time, .weapon-time {
+            font-size: 0.85rem;
+            opacity: 0.8;
+        }
+        
+        .alert-type, .behavior-type, .weapon-type {
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+            font-size: 1.1rem;
+        }
+        
+        .no-alerts, .no-behavior, .no-weapons {
+            text-align: center;
+            opacity: 0.7;
+            padding: 2rem;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            border: 2px dashed rgba(255, 255, 255, 0.2);
+        }
+        
+        .emergency-banner {
+            background: linear-gradient(45deg, #FF0000, #FF6B6B);
+            color: white;
+            padding: 1.2rem;
+            text-align: center;
+            font-weight: bold;
+            font-size: 1.3rem;
+            animation: emergency-flash 1s infinite;
+            display: none;
+            box-shadow: 0 4px 20px rgba(255, 0, 0, 0.5);
+        }
+        
+        @keyframes emergency-flash {
+            0%, 100% { opacity: 1; background: linear-gradient(45deg, #FF0000, #FF6B6B); }
+            50% { opacity: 0.8; background: linear-gradient(45deg, #FF6B6B, #FF0000); }
+        }
+        
+        .footer {
+            text-align: center;
+            padding: 2rem;
+            opacity: 0.8;
+            font-size: 0.9rem;
+            background: rgba(0, 0, 0, 0.3);
+            margin-top: 2rem;
+        }
+        
+        .keyboard-shortcuts {
+            margin-top: 1.5rem;
+            padding: 1rem;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            font-size: 0.8rem;
+            opacity: 0.8;
+        }
+        
+        .pose-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #4ECDC4;
+            margin-right: 0.5rem;
+            animation: poseGlow 1.5s infinite;
+        }
+        
+        @keyframes poseGlow {
+            0%, 100% { box-shadow: 0 0 5px #4ECDC4; }
+            50% { box-shadow: 0 0 15px #4ECDC4, 0 0 25px #4ECDC4; }
+        }
+        
+        .behavior-status {
+            display: inline-block;
+            padding: 0.3rem 0.8rem;
+            border-radius: 15px;
+            font-size: 0.8rem;
+            font-weight: bold;
+            margin-top: 0.5rem;
+        }
+        
+        .behavior-normal {
+            background: rgba(76, 175, 80, 0.3);
+            border: 1px solid #4CAF50;
+            color: #4CAF50;
+        }
+        
+        .behavior-abnormal {
+            background: rgba(255, 165, 0, 0.3);
+            border: 1px solid #FFA500;
+            color: #FFA500;
+        }
+        
+        .behavior-fall {
+            background: rgba(255, 0, 0, 0.3);
+            border: 1px solid #FF0000;
+            color: #FF0000;
+        }
+        
+        .behavior-weapon {
+            background: rgba(255, 69, 0, 0.3);
+            border: 1px solid #FF4500;
+            color: #FF4500;
+        }
+        
+        @media (max-width: 1024px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+            
+            .controls {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .controls {
+                grid-template-columns: 1fr;
+            }
+            
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        /* Scrollbar styling */
+        .alerts-list::-webkit-scrollbar,
+        .behavior-list::-webkit-scrollbar,
+        .weapons-list::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .alerts-list::-webkit-scrollbar-track,
+        .behavior-list::-webkit-scrollbar-track,
+        .weapons-list::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+        }
+        
+        .alerts-list::-webkit-scrollbar-thumb,
+        .behavior-list::-webkit-scrollbar-thumb,
+        .weapons-list::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 3px;
+        }
+        
+        .alerts-list::-webkit-scrollbar-thumb:hover,
+        .behavior-list::-webkit-scrollbar-thumb:hover,
+        .weapons-list::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.5);
+        }
+    </style>
+</head>
+<body>
+    <div class="emergency-banner" id="emergency-banner">
+        🚨 EMERGENCY ALERT: Critical Behavior Detected! Immediate Attention Required! 🚨
+    </div>
+    
+    <div class="header">
+        <h1>🤖 Smart Surveillance System</h1>
+        <p>AI-Powered Human Detection • Pose Estimation • Behavior Analysis • Weapon Detection</p>
+        <p><strong>Team:</strong> Payal Dongre, Priyanka Jadhav</p>
+    </div>
+    
+    <div class="features-banner">
+        ✨ Real-time Video Analysis • YOLOv8 Detection • MediaPipe Pose Estimation • Fall Detection • Abnormal Behavior Recognition • Weapon Detection ✨
+    </div>
+    
+    <div class="container">
+        <div class="video-section">
+            <h2>
+                <span class="status-indicator"></span>
+                <span class="pose-indicator"></span>
+                Live AI Analysis Feed
+            </h2>
+            <img id="video-feed" src="/video_feed" alt="Video Feed Loading...">
+            
+            <div class="controls">
+                <button class="btn" onclick="testAlert()">🧪 Test Alert</button>
+                <button class="btn" onclick="refreshStats()">🔄 Refresh Data</button>
+                <button class="btn" onclick="clearAlerts()">🗑️ Clear Alerts</button>
+                <button class="btn" onclick="toggleSystem()">⏸️ Pause/Resume</button>
+                <button class="btn" onclick="downloadReport()">📊 Generate Report</button>
+                <button class="btn" onclick="calibrateSensitivity()">⚙️ Calibrate</button>
+            </div>
+            
+            <div class="keyboard-shortcuts">
+                <strong>🎮 Keyboard Shortcuts:</strong> 
+                Ctrl+R (Refresh) • Ctrl+T (Test Alert) • Ctrl+Space (Pause/Resume) • Ctrl+C (Calibrate)
+            </div>
+        </div>
+        
+        <div class="sidebar">
+            <div class="stats-card">
+                <h2 class="card-title">📊 System Statistics</h2>
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-value" id="total-detections">0</div>
+                        <div class="stat-label">Human Detections</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="pose-detections">0</div>
+                        <div class="stat-label">Pose Analyses</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="falls-detected">0</div>
+                        <div class="stat-label">Falls Detected</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="abnormal-behaviors">0</div>
+                        <div class="stat-label">Abnormal Behaviors</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="weapons-detected">0</div>
+                        <div class="stat-label">Weapons Detected</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="fps">0.0</div>
+                        <div class="stat-label">FPS</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="uptime">00:00</div>
+                        <div class="stat-label">System Uptime</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="weapons-card">
+                <h2 class="card-title">🔪 Weapon Detections</h2>
+                <div class="weapons-list" id="weapons-list">
+                    <div class="no-weapons">
+                        No weapons detected. System actively monitoring...
+                    </div>
+                </div>
+            </div>
+            
+            <div class="behavior-card">
+                <h2 class="card-title">🏃 Behavior Analysis</h2>
+                <div id="current-behavior">
+                    <strong>Current Status:</strong>
+                    <span class="behavior-status behavior-normal" id="behavior-status">Monitoring</span>
+                </div>
+                <div class="behavior-list" id="behavior-list">
+                    <div class="no-behavior">
+                        AI learning behavioral patterns...
+                    </div>
+                </div>
+            </div>
+            
+            <div class="alerts-card">
+                <h2 class="card-title">🚨 Security Alerts</h2>
+                <div class="alerts-list" id="alerts-list">
+                    <div class="no-alerts">
+                        No alerts detected. System actively monitoring...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="footer">
+        <p>© 2025 Enhanced Smart Surveillance System | SKN Sinhgad College of Engineering</p>
+        <p>🔬 Advanced AI Research Project | Real-time Computer Vision & Machine Learning</p>
+    </div>
+
+    <script>
+        let lastAlertCount = 0;
+        let systemActive = true;
+        
+        function updateStats() {
+            if (!systemActive) return;
+            
+            fetch('/api/stats')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('total-detections').textContent = data.total_detections;
+                    document.getElementById('pose-detections').textContent = data.pose_detections || 0;
+                    document.getElementById('falls-detected').textContent = data.falls_detected;
+                    document.getElementById('abnormal-behaviors').textContent = data.abnormal_behaviors || 0;
+                    document.getElementById('weapons-detected').textContent = data.weapons_detected || 0;
+                    document.getElementById('fps').textContent = data.fps.toFixed(1);
+                    
+                    const uptime = Math.floor(Date.now() / 1000 - data.system_uptime);
+                    const hours = Math.floor(uptime / 3600);
+                    const minutes = Math.floor((uptime % 3600) / 60);
+                    const seconds = uptime % 60;
+                    
+                    let uptimeStr;
+                    if (hours > 0) {
+                        uptimeStr = `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                    } else {
+                        uptimeStr = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                    }
+                    
+                    document.getElementById('uptime').textContent = uptimeStr;
+                })
+                .catch(error => console.error('Error fetching stats:', error));
+        }
+        
+        function updateAlerts() {
+            if (!systemActive) return;
+            
+            fetch('/api/alerts')
+                .then(response => response.json())
+                .then(data => {
+                    const alertsList = document.getElementById('alerts-list');
+                    
+                    if (data.alerts.length === 0) {
+                        alertsList.innerHTML = '<div class="no-alerts">No alerts detected. System actively monitoring...</div>';
+                        return;
+                    }
+                    
+                    // Check for new critical alerts
+                    if (data.total_alerts > lastAlertCount) {
+                        const latestAlert = data.alerts[0];
+                        if (latestAlert.type.includes('Fall') || latestAlert.type.includes('Abnormal') || latestAlert.type.includes('Weapon')) {
+                            showEmergencyBanner();
+                        }
+                        lastAlertCount = data.total_alerts;
+                    }
+                    
+                    const alertsHtml = data.alerts.map(alert => {
+                        const alertClass = alert.type.includes('Fall') ? 'behavior-fall' : 
+                                         alert.type.includes('Abnormal') ? 'behavior-abnormal' : 
+                                         alert.type.includes('Weapon') ? 'behavior-weapon' : 'behavior-normal';
+                        
+                        return `
+                            <div class="alert-item">
+                                <div class="alert-type">${alert.type}</div>
+                                <div class="alert-time">${alert.timestamp}</div>
+                                <div>Confidence: ${(alert.confidence * 100).toFixed(1)}%</div>
+                                ${alert.details ? `<div style="font-size: 0.8rem; margin-top: 0.5rem; opacity: 0.8;">${alert.details}</div>` : ''}
+                                <span class="behavior-status ${alertClass}">${alert.type.split(' ')[0]}</span>
+                            </div>
+                        `;
+                    }).join('');
+                    
+                    alertsList.innerHTML = alertsHtml;
+                })
+                .catch(error => console.error('Error fetching alerts:', error));
+        }
+        
+        function updateWeapons() {
+            if (!systemActive) return;
+            
+            fetch('/api/weapon_detections')
+                .then(response => response.json())
+                .then(data => {
+                    const weaponsList = document.getElementById('weapons-list');
+                    
+                    if (data.weapon_alerts.length === 0) {
+                        weaponsList.innerHTML = '<div class="no-weapons">No weapons detected. System actively monitoring...</div>';
+                        return;
+                    }
+                    
+                    const weaponsHtml = data.weapon_alerts.map(alert => {
+                        return `
+                            <div class="weapon-item">
+                                <div class="weapon-type">${alert.type}</div>
+                                <div class="weapon-time">${alert.timestamp}</div>
+                                <div>Confidence: ${(alert.confidence * 100).toFixed(1)}%</div>
+                                ${alert.details ? `<div style="font-size: 0.8rem; margin-top: 0.5rem; opacity: 0.8;">${alert.details}</div>` : ''}
+                                <span class="behavior-status behavior-weapon">Weapon</span>
+                            </div>
+                        `;
+                    }).join('');
+                    
+                    weaponsList.innerHTML = weaponsHtml;
+                })
+                .catch(error => console.error('Error fetching weapon detections:', error));
+        }
+        
+        function updateBehaviorAnalysis() {
+            fetch('/api/behavior_history')
+                .then(response => response.json())
+                .then(data => {
+                    const behaviorList = document.getElementById('behavior-list');
+                    const statusElement = document.getElementById('behavior-status');
+                    
+                    // Update current status (this would need more backend support)
+                    statusElement.textContent = 'Analyzing';
+                    statusElement.className = 'behavior-status behavior-normal';
+                    
+                    if (data.recent_behaviors && data.recent_behaviors.length > 0) {
+                        const behaviorsHtml = data.recent_behaviors.map((behavior, index) => `
+                            <div class="behavior-item">
+                                <div class="behavior-type">Behavior Pattern ${index + 1}</div>
+                                <div class="behavior-time">${new Date().toLocaleTimeString()}</div>
+                                <div>Analysis: ${behavior}</div>
+                            </div>
+                        `).join('');
+                        
+                        behaviorList.innerHTML = behaviorsHtml;
+                    } else {
+                        behaviorList.innerHTML = '<div class="no-behavior">AI learning behavioral patterns...</div>';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching behavior data:', error);
+                });
+        }
+        
+        function showEmergencyBanner() {
+            const banner = document.getElementById('emergency-banner');
+            banner.style.display = 'block';
+            
+            // Play alert sound (if supported)
+            try {
+                const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmYgCT+X2O/AeS8FKYfU6cR5QA8fcrOXQ');
+                audio.play();
+            } catch (e) {
+                console.log('Audio notification not supported');
+            }
+            
+            setTimeout(() => {
+                banner.style.display = 'none';
+            }, 8000); // Hide after 8 seconds
+        }
+        
+        function testAlert() {
+            fetch('/api/test_alert')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Test alert triggered:', data);
+                    showEmergencyBanner();
+                })
+                .catch(error => console.error('Error triggering test alert:', error));
+        }
+        
+        function refreshStats() {
+            updateStats();
+            updateAlerts();
+            updateWeapons();
+            updateBehaviorAnalysis();
+            
+            // Visual feedback
+            const btn = event.target;
+            const originalText = btn.textContent;
+            btn.textContent = '🔄 Refreshing...';
+            btn.disabled = true;
+            
+            setTimeout(() => {
+                btn.textContent = originalText;
+                btn.disabled = false;
+            }, 1000);
+        }
+        
+        function clearAlerts() {
+            if (confirm('Are you sure you want to clear all alerts and reset counters?')) {
+                fetch('/api/clear_alerts', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            console.log('Alerts cleared successfully.');
+                            // Refresh the UI to show empty lists and reset stats
+                            updateAlerts();
+                            updateWeapons();
+                            updateStats();
+                        } else {
+                            console.error('Failed to clear alerts:', data.message);
+                            alert('Error: Could not clear alerts.');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error clearing alerts:', error);
+                        alert('An error occurred while clearing alerts.');
+                    });
+            }
+        }
+        
+        function toggleSystem() {
+            systemActive = !systemActive;
+            const btn = event.target;
+            const statusIndicator = document.querySelector('.status-indicator');
+            
+            if (systemActive) {
+                btn.textContent = '⏸️ Pause System';
+                statusIndicator.style.background = '#4CAF50';
+                statusIndicator.style.animation = 'pulse 2s infinite';
+            } else {
+                btn.textContent = '▶️ Resume System';
+                statusIndicator.style.background = '#FFA500';
+                statusIndicator.style.animation = 'none';
+            }
+        }
+        
+        function downloadReport() {
+            // Fetch latest stats (which include camera coordinates) and generate the JSON report
+            fetch('/api/stats')
+                .then(response => response.json())
+                .then(data => {
+                    // `data` is the same shape returned by /api/stats in app.py
+                    const stats = data && data.stats ? data.stats : {
+                        detections: document.getElementById('total-detections').textContent,
+                        poses: document.getElementById('pose-detections').textContent,
+                        falls: document.getElementById('falls-detected').textContent,
+                        abnormal: document.getElementById('abnormal-behaviors').textContent,
+                        weapons: document.getElementById('weapons-detected').textContent,
+                        uptime: document.getElementById('uptime').textContent
+                    };
+
+                    const reportData = {
+                        timestamp: new Date().toISOString(),
+                        stats: stats,
+                        cameras: data && data.cameras ? data.cameras : null,
+                        camera_coordinates: data && data.cameras ? data.cameras : null,
+                        system: 'Smart Surveillance System v2.0'
+                    };
+
+                    const blob = new Blob([JSON.stringify(reportData, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `surveillance_report_${new Date().toISOString().split('T')[0]}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                })
+                .catch(err => {
+                    console.warn('Failed to fetch /api/stats, falling back to DOM values', err);
+                    const reportData = {
+                        timestamp: new Date().toISOString(),
+                        stats: {
+                            detections: document.getElementById('total-detections').textContent,
+                            poses: document.getElementById('pose-detections').textContent,
+                            falls: document.getElementById('falls-detected').textContent,
+                            abnormal: document.getElementById('abnormal-behaviors').textContent,
+                            weapons: document.getElementById('weapons-detected').textContent,
+                            uptime: document.getElementById('uptime').textContent
+                        },
+                        cameras: null,
+                        camera_coordinates: null,
+                        system: 'Smart Surveillance System v2.0'
+                    };
+                    const blob = new Blob([JSON.stringify(reportData, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `surveillance_report_${new Date().toISOString().split('T')[0]}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                });
+        }
+        
+        function calibrateSensitivity() {
+            alert('🔧 Calibration feature coming soon!\n\nThis will allow you to adjust:\n• Fall detection sensitivity\n• Movement thresholds\n• Alert frequencies\n• Pose estimation accuracy\n• Weapon detection sensitivity');
+        }
+        
+        // Keyboard shortcuts
+        document.addEventListener('keydown', function(e) {
+            if (e.ctrlKey) {
+                switch(e.key) {
+                    case 'r':
+                        e.preventDefault();
+                        refreshStats();
+                        break;
+                    case 't':
+                        e.preventDefault();
+                        testAlert();
+                        break;
+                    case ' ':
+                        e.preventDefault();
+                        toggleSystem();
+                        break;
+                    case 'c':
+                        e.preventDefault();
+                        calibrateSensitivity();
+                        break;
+                }
+            }
+        });
+        
+        // Update data every 2 seconds
+        setInterval(() => {
+            if (systemActive) {
+                updateStats();
+                updateAlerts();
+                updateWeapons();
+                updateBehaviorAnalysis();
+            }
+        }, 2000);
+        
+        // Initial load
+        updateStats();
+        updateAlerts();
+        updateWeapons();
+        updateBehaviorAnalysis();
+        
+        // Handle page visibility changes
+        document.addEventListener('visibilitychange', function() {
+            if (document.visibilityState === 'visible' && systemActive) {
+                updateStats();
+                updateAlerts();
+                updateWeapons();
+                updateBehaviorAnalysis();
+            }
+        });
+        
+        // Error handling for video feed
+        document.getElementById('video-feed').onerror = function() {
+            this.alt = 'Video feed unavailable. Check camera connection.';
+            this.style.background = 'rgba(255,0,0,0.1)';
+        };
+        
+        console.log('🚀 Smart Surveillance Dashboard Loaded');
+        console.log('📊 Monitoring: Human Detection, Pose Estimation, Behavior Analysis, Weapon Detection');
+    </script>
+</body>
+</html>

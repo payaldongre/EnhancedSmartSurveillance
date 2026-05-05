@@ -1,12 +1,30 @@
 flask==2.3.3
+
+# Computer Vision
 opencv-python==4.8.1.78
-ultralytics==8.0.196
-mediapipe==0.10.7
-numpy==1.24.3
 Pillow==10.0.1
+
+# Deep Learning - YOLOv8 (Ultralytics) + PyTorch
+ultralytics==8.0.196
+torch
+torchvision==0.20.1
+torchaudio==2.5.1
+
+# Pose Estimation
+mediapipe==0.10.7
+
+# Numerical / ML
+numpy==1.24.3
+pandas==2.0.3
+scikit-learn==1.3.0
 python-dateutil==2.8.2
 
-scikit-learn==1.3.0
+# Visualization
 matplotlib==3.7.2
 seaborn==0.12.2
-pandas==2.0.3
+
+tensorflow  # or a TF version compatible with your environment; install only if you will train/load Keras models
+
+# (optional) for advanced tracking later:
+filterpy==1.4.5
+scikit-image==0.20.0

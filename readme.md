@@ -1,212 +1,248 @@
-# Enhanced Smart Surveillance System Requirements
-# ================================================
+# 🛡️ Intelligent Smart Surveillance System
 
-# Core Dependencies
-flask==2.3.3
-opencv-python==4.8.1.78
-ultralytics==8.0.196
-mediapipe==0.10.7
-numpy==1.24.3
-Pillow==10.0.1
-python-dateutil==2.8.2
+An AI-powered real-time surveillance system that integrates:
 
-# Additional Dependencies for Enhanced Features
-scikit-learn==1.3.0
-matplotlib==3.7.2
-seaborn==0.12.2
-pandas==2.0.3
+* 🧍 Human detection
+* 🤸 Pose-based behavior analysis
+* 🔪 Hazardous object (weapon) detection
+* 🏃 Speed and motion estimation
 
-# System Requirements:
-# - Python 3.8 or higher
-# - Webcam or USB camera
-# - Minimum 4GB RAM (8GB recommended)
-# - GPU support optional but recommended for better performance
+All combined into a **live monitoring dashboard** for intelligent surveillance.
 
-# Installation Instructions:
-# ========================
-# 1. Create virtual environment:
-#    python -m venv surveillance_env
-#
-# 2. Activate environment:
-#    # Windows:
-#    surveillance_env\Scripts\activate
-#    # Linux/Mac:
-#    source surveillance_env/bin/activate
-#
-# 3. Install requirements:
-#    pip install -r requirements.txt
-#
-# 4. Create templates folder:
-#    mkdir templates
-#
-# 5. Save the HTML file as templates/index.html
-#
-# 6. Run the application:
-#    python app.py
-#
-# 7. Open browser and go to:
-#    http://localhost:5000
+---
 
-# Hardware Setup (for future ESP32-CAM integration):
-# =================================================
-# 1. ESP32-CAM module with OV2640 camera
-# 2. FTDI programmer or ESP32-CAM-MB board
-# 3. MicroSD card (optional for local storage)
-# 4. Power supply (5V/2A recommended)
-# 5. WiFi network for streaming
+## 🚀 Features
 
-# ESP32-CAM Code (Arduino IDE):
-# ============================
-"""
-#include "esp_camera.h"
-#include <WiFi.h>
-#include "esp_http_server.h"
+* 🎥 Real-time video streaming (Webcam)
+* 🧍 Human detection using YOLOv8
+* 🤸 Pose estimation using MediaPipe
+* 🚨 Fall detection & abnormal behavior detection
+* 🏃 Running / high-speed movement detection
+* 🔪 Hazardous object detection (knife, tools, etc.)
+* 📏 Speed estimation using motion tracking
+* 📊 Live dashboard with alerts and system stats
+* 🔔 Alert logging system
+* 📁 Data storage:
 
-// WiFi credentials
-const char* ssid = "YOUR_WIFI_SSID";
-const char* password = "YOUR_WIFI_PASSWORD";
+  * Pose sequences
+  * Alerts
+  * Reports
 
-// Camera configuration for AI OV2640
-#define CAMERA_MODEL_AI_THINKER
-#include "camera_pins.h"
+---
 
-void setup() {
-  Serial.begin(115200);
-  
-  // Camera configuration
-  camera_config_t config;
-  config.ledc_channel = LEDC_CHANNEL_0;
-  config.ledc_timer = LEDC_TIMER_0;
-  config.pin_d0 = Y2_GPIO_NUM;
-  config.pin_d1 = Y3_GPIO_NUM;
-  config.pin_d2 = Y4_GPIO_NUM;
-  config.pin_d3 = Y5_GPIO_NUM;
-  config.pin_d4 = Y6_GPIO_NUM;
-  config.pin_d5 = Y7_GPIO_NUM;
-  config.pin_d6 = Y8_GPIO_NUM;
-  config.pin_d7 = Y9_GPIO_NUM;
-  config.pin_xclk = XCLK_GPIO_NUM;
-  config.pin_pclk = PCLK_GPIO_NUM;
-  config.pin_vsync = VSYNC_GPIO_NUM;
-  config.pin_href = HREF_GPIO_NUM;
-  config.pin_sscb_sda = SIOD_GPIO_NUM;
-  config.pin_sscb_scl = SIOC_GPIO_NUM;
-  config.pin_pwdn = PWDN_GPIO_NUM;
-  config.pin_reset = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 20000000;
-  config.pixel_format = PIXFORMAT_JPEG;
+## 🧠 Tech Stack
 
-  if(psramFound()){
-    config.frame_size = FRAMESIZE_UXGA;
-    config.jpeg_quality = 10;
-    config.fb_count = 2;
-  } else {
-    config.frame_size = FRAMESIZE_SVGA;
-    config.jpeg_quality = 12;
-    config.fb_count = 1;
-  }
+* Python 3.10 (recommended via Anaconda)
+* Flask (Backend + API)
+* OpenCV (Video processing)
+* YOLOv8 (Ultralytics)
+* MediaPipe (Pose estimation)
+* NumPy, Pandas, Scikit-learn
+* HTML, CSS, JavaScript (Frontend)
 
-  // Camera init
-  esp_err_t err = esp_camera_init(&config);
-  if (err != ESP_OK) {
-    Serial.printf("Camera init failed with error 0x%x", err);
-    return;
-  }
+---
 
-  // WiFi connection
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("WiFi connected");
-  Serial.print("Camera Ready! Use 'http://");
-  Serial.print(WiFi.localIP());
-  Serial.println("' to connect");
+## 📁 Project Structure
 
-  startCameraServer();
-}
+```
+EnhancedSmartSurveillance/
+│
+├── app.py
+├── object_detector.py
+├── speed_estimator.py
+├── label_generator.py
+├── knife.yaml
+│
+├── templates/
+│   └── index.html
+│
+├── static/
+│
+├── data/
+│   ├── pose_sequences/
+│   ├── alerts/
+│   └── reports/
+│
+├── models/
+│
+├── requirements.txt
+└── README.md
+```
 
-void loop() {
-  delay(10000);
-}
-"""
+---
 
-# Project Structure:
-# ==================
-# surveillance_project/
-# ├── app.py                 # Main Flask application
-# ├── requirements.txt       # This file
-# ├── templates/
-# │   └── index.html        # Dashboard HTML template
-# ├── models/               # AI models (auto-downloaded)
-# ├── data/                 # Data storage
-# │   ├── alerts/          # Alert logs
-# │   └── reports/         # Generated reports
-# └── static/              # Static files (optional)
-#     ├── css/
-#     ├── js/
-#     └── images/
+## ⚙️ Setup Instructions
 
-# Features Implemented:
-# ====================
-# ✅ Real-time video capture from webcam
-# ✅ Human detection using YOLOv8
-# ✅ Pose estimation using MediaPipe
-# ✅ Fall detection algorithm
-# ✅ Abnormal behavior analysis
-# ✅ Web-based dashboard
-# ✅ Real-time alerts system
-# ✅ Statistics tracking
-# ✅ Responsive UI design
+### 1️⃣ Clone the Repository
 
-# Future Enhancements (when hardware is available):
-# ================================================
-# 🔄 ESP32-CAM integration
-# 🔄 Multiple camera support
-# 🔄 Database storage (SQLite/MySQL)
-# 🔄 Email/SMS notifications
-# 🔄 Motion tracking
-# 🔄 Object detection beyond humans
-# 🔄 Night vision support
-# 🔄 Cloud storage integration
-# 🔄 Mobile app companion
-# 🔄 Advanced behavior patterns
+```bash
+git clone https://github.com/payaldongre/EnhancedSmartSurveillance.git
+cd EnhancedSmartSurveillance
+```
 
-# Troubleshooting:
-# ===============
-# 1. Camera not detected:
-#    - Check if camera is connected and not used by other apps
-#    - Try different camera index: cv2.VideoCapture(1) or cv2.VideoCapture(2)
-#
-# 2. Low FPS:
-#    - Reduce camera resolution in the code
-#    - Use GPU acceleration if available
-#    - Close other applications
-#
-# 3. High CPU usage:
-#    - Increase sleep time in video processing loop
-#    - Use smaller YOLO model (yolov8n.pt instead of yolov8s.pt)
-#    - Reduce MediaPipe model complexity
-#
-# 4. Installation issues:
-#    - Use Python 3.8-3.11 (avoid 3.12 for compatibility)
-#    - Update pip: python -m pip install --upgrade pip
-#    - Install Visual C++ Build Tools (Windows)
+---
 
-# Performance Optimization:
-# ========================
-# - Use GPU acceleration: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
-# - Enable CUDA support for OpenCV if available
-# - Optimize frame processing rate
-# - Use threading for better performance
-# - Implement frame skipping for real-time processing
+### 2️⃣ Create Environment
 
-# Security Considerations:
-# =======================
-# - Change default Flask secret key
-# - Implement user authentication
-# - Use HTTPS in production
-# - Secure camera access
-# - Implement rate limiting
-# - Add input validation
+```bash
+conda create --prefix ./env python=3.10
+conda activate ./env
+```
+
+---
+
+### 3️⃣ Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+### 4️⃣ Fix PyTorch Compatibility (IMPORTANT)
+
+```bash
+pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --extra-index-url https://download.pytorch.org/whl/cpu
+```
+
+---
+
+## ▶️ Run the Project
+
+```bash
+# Navigate to project folder
+cd EnhancedSmartSurveillance
+
+# Activate environment
+conda activate ./env
+
+# Run application
+python app.py
+```
+
+---
+
+## 🌐 Access Dashboard
+
+After running, open:
+
+* Local:
+
+```
+http://localhost:5000
+```
+
+* Same network (optional):
+
+```
+http://<your-ip-address>:5000
+```
+
+Example:
+
+```
+http://192.168.1.5:5000
+```
+
+---
+
+## 📡 API Endpoints
+
+| Endpoint                 | Description        |
+| ------------------------ | ------------------ |
+| `/`                      | Dashboard          |
+| `/video_feed`            | Live video stream  |
+| `/api/stats`             | System statistics  |
+| `/api/alerts`            | Alert logs         |
+| `/api/weapon_detections` | Weapon alerts      |
+| `/api/behavior_history`  | Behavior tracking  |
+| `/api/test_alert`        | Trigger test alert |
+| `/api/clear_alerts`      | Reset alerts       |
+
+---
+
+## 🎯 Detection Capabilities
+
+### 🧍 Human Detection
+
+* YOLOv8-based detection
+
+### 🤸 Behavior Analysis
+
+* Normal activity
+* Abnormal behavior
+* Running detection
+* Fall detection
+
+### 🔪 Hazard Detection
+
+* Detects:
+
+  * Knife
+  * Tools / objects
+* Triggers alerts when near a person
+
+### 🏃 Speed Estimation
+
+* Motion tracking across frames
+* Based on:
+
+  * Pixel displacement
+  * Pose normalization
+  * Temporal smoothing
+
+---
+
+## ⚠️ Important Notes
+
+* Python **3.10 recommended** (avoid 3.13)
+* Webcam must be available
+* Close other apps using camera
+*
+
+👉 **YOLO weights will be downloaded automatically on first run.**
+
+---
+
+## 🧪 Testing
+
+* Start the system and open dashboard
+* Try:
+
+  * Fast movement → running detection
+  * Sudden fall → fall detection
+  * Object in hand → weapon detection
+
+---
+
+## 📌 Future Scope
+
+* ESP32-CAM integration
+* Multi-camera support
+* Cloud deployment
+* SMS / Email alerts
+* Database integration
+
+---
+
+## 👩‍💻 Contributors
+
+* Payal Dongre
+* Priyanka Jadhav
+
+---
+
+## 🏁 Summary
+
+A real-time intelligent surveillance system combining:
+
+* Object detection
+* Pose estimation
+* Behavior analysis
+* Motion tracking
+
+into a unified monitoring solution.
+
+---
+
+> Note: Large files, model weights, and environment folders are excluded using `.gitignore` for efficient repository management.
