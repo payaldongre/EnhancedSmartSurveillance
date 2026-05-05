@@ -30,6 +30,43 @@ All combined into a **live monitoring dashboard** for intelligent surveillance.
 
 ---
 
+## 📸 Demo Preview
+
+### 🧠 Live AI Detection (Normal Activity)
+![Normal Activity](assets/demo1.png)
+
+---
+
+### 🏃 Behavior Detection (Running)
+![Running Detection](assets/demo2.png)
+
+---
+
+### 🔪 Weapon Detection Alert
+![Weapon Detection](assets/demo3.png)
+
+---
+
+### 📊 System Statistics Dashboard
+![System Stats](assets/stats1.png)
+
+---
+
+### ⚠️ Weapon Detection Logs
+![Weapon Logs](assets/stats2.png)
+
+---
+
+### 🤸 Behavior Analysis Panel
+![Behavior Analysis](assets/stats3.png)
+
+---
+
+### 🚨 Security Alerts Panel
+![Security Alerts](assets/stats4.png)
+
+---
+
 ## 🧠 Tech Stack
 
 * Python 3.10 (recommended via Anaconda)
