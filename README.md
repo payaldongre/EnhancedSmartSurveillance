@@ -8,6 +8,7 @@ An AI-powered real-time surveillance system that integrates:
 * 🏃 Speed and motion estimation
 
 All combined into a **live monitoring dashboard** for intelligent surveillance.
+> This project demonstrates building a real-time AI system with backend integration and automated decision-making, aligned with production AI workflows.
 
 ---
 
