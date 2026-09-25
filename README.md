@@ -338,6 +338,7 @@ Each person's behavior history is tracked independently, so one person's movemen
 
 - Locates the plate inside each vehicle box (bundled plate cascade, then a shape/aspect-ratio fallback)
 - Reads it with a pluggable OCR backend: **easyocr** (recommended, reuses the torch install) or **pytesseract**
+- Install easyocr as `pip install easyocr "numpy<2"` — its metadata otherwise upgrades NumPy to 2.x, which is binary-incompatible with the NumPy 1.x builds of ultralytics / matplotlib / opencv already in the environment
 - De-duplicates per vehicle track, so the same plate only raises a new alert when it actually changes
 - If no OCR backend is installed the rest of the system keeps running and ANPR simply reports itself unavailable
 
@@ -370,6 +371,8 @@ All optional — sensible defaults apply when unset.
 | Variable | Default | Purpose |
 | -------- | ------- | ------- |
 | `CAMERA_ID` | `Cam_1` | Identifier included in alerts / C2 events |
+| `CAMERA_INDEX` | `0` | Camera device index, **or** a video-file path / RTSP-URL string |
+| `CAMERA_WIDTH` / `CAMERA_HEIGHT` | `640` / `480` | Capture resolution (raise for wide-area/field cameras) |
 | `WEAPON_MODEL_PATH` | auto-detected | Path to a custom weapon `best.pt`; otherwise COCO is used |
 | `HAZARDOUS_CONF_THRESHOLD` | `0.4` | Confidence needed to flag a hazardous object |
 | `ENABLE_VEHICLE_DETECTION` | `1` | Toggle vehicle detection/classification |

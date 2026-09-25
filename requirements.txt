@@ -41,7 +41,9 @@ scikit-image==0.20.0
 
 # ANPR (number-plate recognition) needs ONE OCR backend. easyocr reuses the
 # torch install from step 4 and needs no extra system binary — recommended.
-# easyocr==1.7.1
+# easyocr==1.7.1   -- install it as:  pip install easyocr "numpy<2"
+#   easyocr's metadata otherwise upgrades NumPy to 2.x, which is binary-incompatible
+#   with the NumPy 1.x builds of ultralytics / matplotlib / opencv already installed.
 # (alternative: lighter Python side, but requires the Tesseract OCR binary on PATH)
 # pytesseract==0.3.13
 

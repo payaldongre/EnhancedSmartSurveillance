@@ -83,6 +83,12 @@ ALERT_ON_NEW_VEHICLE = _env_flag("ALERT_ON_NEW_VEHICLE", False)
 FACE_DETECT_EVERY_N_FRAMES = int(os.environ.get("FACE_DETECT_EVERY_N_FRAMES", "5"))
 ANPR_EVERY_N_FRAMES = int(os.environ.get("ANPR_EVERY_N_FRAMES", "15"))
 CAMERA_ID = os.environ.get("CAMERA_ID", "Cam_1")
+# Camera source: a device index ("0", "1", ...) or a video-file path / RTSP-URL
+# string. Resolution is applied on a best-effort basis (the driver may pick the
+# nearest supported size). Raise these for wide-area/field cameras.
+CAMERA_INDEX = os.environ.get("CAMERA_INDEX", "0")
+CAMERA_WIDTH = int(os.environ.get("CAMERA_WIDTH", "640"))
+CAMERA_HEIGHT = int(os.environ.get("CAMERA_HEIGHT", "480"))
 
 # FIX: detect device BEFORE creating either model, so both can be told
 # explicitly which device to use rather than relying on Ultralytics' auto-detect.
@@ -432,7 +438,16 @@ def _handle_zone_event(ev):
 # ------------------------------------------------------
 class FrameGrabber:
     def __init__(self, source=0, width=640, height=480):
-        self.cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
+        # A numeric source (or numeric string) is a local camera index and uses the
+        # DirectShow backend on Windows; any other string (a video-file path or an
+        # RTSP/HTTP stream URL) is opened directly so network/IP cameras and
+        # recorded clips also work.
+        if isinstance(source, str) and source.strip().isdigit():
+            source = int(source.strip())
+        if isinstance(source, int):
+            self.cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
+        else:
+            self.cap = cv2.VideoCapture(source)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # ask the driver for a shallow buffer too
@@ -467,7 +482,7 @@ def video_processing_thread():
     global latest_frame, last_alert_time, system_stats, loitering_tracker
     global last_hazardous_detections
 
-    grabber = FrameGrabber(0, 640, 480)
+    grabber = FrameGrabber(CAMERA_INDEX, CAMERA_WIDTH, CAMERA_HEIGHT)
     if not grabber.running:
         print("Error: Could not open webcam")
         return
@@ -663,7 +678,7 @@ def video_processing_thread():
                         _handle_zone_event(zone_event)
 
                 detections = [(track_id, x1, y1, x2, y2, "person")]
-                annotated_frame = process_person_detections(detections, annotated_frame, camera_id="Cam_1")
+                annotated_frame = process_person_detections(detections, annotated_frame, camera_id=CAMERA_ID)
 
                 if track_id not in loitering_tracker:
                     loitering_tracker[track_id] = {
@@ -1063,6 +1078,7 @@ def generate_report():
 
 if __name__ == '__main__':
     print("Starting Enhanced Smart Surveillance System...")
+    print(f"Camera source: {CAMERA_INDEX} @ {CAMERA_WIDTH}x{CAMERA_HEIGHT}")
     os.makedirs('templates', exist_ok=True)
 
     video_thread = threading.Thread(target=video_processing_thread, daemon=True)
