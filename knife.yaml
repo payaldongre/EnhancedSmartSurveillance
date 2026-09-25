@@ -1,10 +1,23 @@
-path: r"D:\EnhancedSmartSurveillance\dataset\train\images\knife_01.jpg"
-train: train/images
-val: val/images
-test: test/images
+# YOLOv8 dataset config for the custom weapon model.
+#
+# Paths are relative to this file's directory (Ultralytics resolves `path` then
+# joins train/val/test onto it). Keep the layout:
+#   dataset/images/{train,val,test}
+#   dataset/labels/{train,val,test}
+#
+# NOTE: the previous version had two conflicting `nc:`/`names:` blocks and a
+# hardcoded Windows `path:`. YAML keeps only the last duplicate key silently,
+# which is exactly the kind of bug that makes a training run label classes
+# wrong. Single source of truth now.
 
-nc: 1   # number of classes
-names: ["knife"]
+path: dataset
+train: images/train
+val: images/val
+test: images/test
 
-nc: 4
-names: ['knife', 'handgun', 'fork', 'scissors']
+nc: 4  # number of classes
+names:
+  0: knife
+  1: handgun
+  2: fork
+  3: scissors

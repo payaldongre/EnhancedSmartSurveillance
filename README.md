@@ -2,10 +2,16 @@
 
 An AI-powered real-time surveillance system that integrates:
 
-- 🧍 Human detection
+- 🧍 Human detection & tracking
+- 🚗 Vehicle detection & classification
+- 🙂 Face detection
+- 🪪 Automatic Number Plate Recognition (ANPR)
 - 🤸 Pose-based behavior analysis
 - 🔪 Hazardous object (weapon) detection
+- 🚧 Virtual fence / restricted-zone intrusion detection
+- 🌙 Night-time movement detection
 - 🏃 Speed and motion estimation
+- 🔗 Command & Control (C2) integration
 
 All combined into a **live monitoring dashboard** for intelligent surveillance.
 
@@ -25,9 +31,17 @@ All combined into a **live monitoring dashboard** for intelligent surveillance.
 - 📊 Live dashboard with alerts and system stats
 - 🔔 Alert logging system
 - ⚡ Optional GPU acceleration for YOLO inference
+- 🚗 Vehicle detection & classification (type + dominant colour, reuses the tracker's boxes — no extra inference)
+- 🙂 Face detection (OpenCV's bundled Haar cascades, optional privacy blur)
+- 🪪 Automatic Number Plate Recognition (plate localisation + pluggable OCR)
+- 🚧 Virtual fence intrusion detection (polygon zones, dwell/loiter alerts)
+- 🌙 Night-time movement detection (low-light enhancement + frame-difference motion)
+- 🔗 Command & Control (C2) integration (standard event schema over webhook, optional MQTT)
+- 💾 Persistent storage of alerts, events and reports (JSONL / JSON under `data/`)
 - 📁 Data storage:
   - Pose sequences
   - Alerts
+  - Events (C2 payloads)
   - Reports
 
 ---
@@ -85,6 +99,9 @@ All combined into a **live monitoring dashboard** for intelligent surveillance.
 - MediaPipe (Pose estimation — CPU-only, no GPU delegate available)
 - PyTorch (CPU or CUDA, see setup below)
 - NumPy, Pandas, Scikit-learn
+- OpenCV Haar cascades (face detection) + the bundled plate cascade (ANPR localisation)
+- easyocr / pytesseract (optional — ANPR OCR backend)
+- HTTP webhooks / MQTT (Command & Control integration)
 - HTML, CSS, JavaScript (Frontend)
 
 ---
@@ -95,7 +112,15 @@ All combined into a **live monitoring dashboard** for intelligent surveillance.
 EnhancedSmartSurveillance/
 │
 ├── app.py
-├── object_detector.py
+├── object_detector.py        # hazardous-object detection (custom weapon model aware)
+├── vehicle_detector.py       # vehicle detection + type/colour classification
+├── face_detector.py          # face detection (Haar cascades, optional blur)
+├── anpr.py                   # number-plate localisation + OCR
+├── virtual_fence.py          # polygon zones, intrusion / dwell detection
+├── night_vision.py           # low-light enhancement + motion detection
+├── c2_integration.py         # Command & Control event publishing (webhook/MQTT)
+├── event_store.py            # persistence for alerts, events and reports
+├── zones.json                # virtual fence zone definitions
 ├── speed_estimator.py
 ├── label_generator.py
 ├── knife.yaml
@@ -254,6 +279,15 @@ http://192.168.1.5:5000
 | `/api/behavior_history`  | Behavior tracking  |
 | `/api/test_alert`        | Trigger test alert |
 | `/api/clear_alerts`      | Reset alerts       |
+| `/api/detections`        | Combined snapshot of every detector |
+| `/api/vehicles`          | Vehicle detection stats |
+| `/api/faces`             | Face detection stats |
+| `/api/anpr`              | Number-plate reads   |
+| `/api/zones`             | List / add (POST) virtual fence zones |
+| `/api/zones/<name>`      | Delete a virtual fence zone (DELETE) |
+| `/api/c2/status`         | Command & Control integration status |
+| `/api/c2/test`           | Queue a test event to the C2 system (POST) |
+| `/api/report`            | Build + persist a full snapshot report |
 
 ---
 
@@ -275,9 +309,10 @@ Each person's behavior history is tracked independently, so one person's movemen
 ### 🔪 Hazard Detection
 
 - Out of the box (stock, COCO-pretrained model): detects **knife, scissors, baseball bat, bottle** near a person
-- Detecting firearms or an axe requires a custom-trained model, since those classes don't exist in the stock model's training data — this is in progress
+- A **custom-trained weapon model is supported and auto-detected**. Drop your trained YOLOv8 weights at `models/weapons/best.pt` (or set `WEAPON_MODEL_PATH`), and the system uses them instead of the stock model — every class the model was trained on is then treated as hazardous, so a knife+gun model lights up both. Candidate paths checked, in order: `WEAPON_MODEL_PATH`, `models/weapons/best.pt`, `models/best.pt`, `best.pt`, `runs/detect/train/weights/best.pt`. The startup log prints which model is in use, and `/api/detections` reports it too
+- Fine-tune the model with the included `label_generator.py` annotator and `knife.yaml` dataset config (`dataset/images/{train,val,test}` + `dataset/labels/{train,val,test}`)
 - A detected weapon only triggers a new alert once per occurrence — moving the same object around, or it staying in view, no longer inflates the alert count
-- Confidence can drop under partial occlusion (e.g. an object partly covered by a hand) — a known limitation of general-purpose pretrained models, tunable via `hazardous_conf_threshold` in `object_detector.py`
+- Confidence can drop under partial occlusion (e.g. an object partly covered by a hand) — a known limitation of general-purpose pretrained models, tunable via `HAZARDOUS_CONF_THRESHOLD`
 
 ### 🏃 Speed Estimation
 
@@ -286,6 +321,69 @@ Each person's behavior history is tracked independently, so one person's movemen
   - Pixel displacement
   - Pose normalization
   - Temporal smoothing, normalized against actual elapsed time so it stays accurate even when FPS varies
+
+### 🚗 Vehicle Detection & Classification
+
+- Reuses the person tracker's own YOLO boxes, so enabling it adds essentially no inference cost
+- Classifies **type** (car, truck, bus, motorcycle, bicycle) and **dominant paint colour** (red, blue, silver/gray, black, ...)
+- Cumulative counts are de-duplicated per tracked vehicle, so a vehicle that stays in frame is only counted once
+
+### 🙂 Face Detection
+
+- Uses the Haar cascades bundled inside `opencv-python` — no extra download or dependency, works offline
+- Optional pixelation of detected faces for privacy (`FACE_PRIVACY_BLUR=1`)
+- Only the face **count** is stored or forwarded; no face recognition or identity data is kept
+
+### 🪪 Automatic Number Plate Recognition (ANPR)
+
+- Locates the plate inside each vehicle box (bundled plate cascade, then a shape/aspect-ratio fallback)
+- Reads it with a pluggable OCR backend: **easyocr** (recommended, reuses the torch install) or **pytesseract**
+- De-duplicates per vehicle track, so the same plate only raises a new alert when it actually changes
+- If no OCR backend is installed the rest of the system keeps running and ANPR simply reports itself unavailable
+
+### 🚧 Virtual Fence / Restricted Zones
+
+- Polygons defined in `zones.json` using **normalised** coordinates (0-1), so they are camera-resolution independent
+- Emits **intrusion**, **dwell** (loitering past the zone's dwell time) and **exit** events for people and vehicles
+- Zones can also be added at runtime via `POST /api/zones`
+- State is per (track, zone), so standing inside a zone does not re-fire the alert every frame
+
+### 🌙 Night-time Movement Detection
+
+- Estimates scene brightness every frame and switches to **night mode** below the threshold
+- In night mode the frame is enhanced (CLAHE + gamma) for both display and detection
+- Detects movement with frame differencing — independent of YOLO, so it still works when the models struggle in the dark
+
+### 🔗 Command & Control (C2) Integration
+
+- Every alert is normalised into one stable JSON schema (`smart-surveillance.event/1.0`) with a severity level
+- Delivered over an HTTP webhook (`C2_WEBHOOK_URL`, optional `C2_API_KEY`) and/or MQTT (`C2_MQTT_HOST`)
+- Publishing is queued and asynchronous with retries, so a slow or unreachable C2 system never stalls the video loop
+- Live delivery stats (sent / queued / failed) are shown on the dashboard
+
+---
+
+## ⚙️ Configuration (environment variables)
+
+All optional — sensible defaults apply when unset.
+
+| Variable | Default | Purpose |
+| -------- | ------- | ------- |
+| `CAMERA_ID` | `Cam_1` | Identifier included in alerts / C2 events |
+| `WEAPON_MODEL_PATH` | auto-detected | Path to a custom weapon `best.pt`; otherwise COCO is used |
+| `HAZARDOUS_CONF_THRESHOLD` | `0.4` | Confidence needed to flag a hazardous object |
+| `ENABLE_VEHICLE_DETECTION` | `1` | Toggle vehicle detection/classification |
+| `ENABLE_FACE_DETECTION` | `1` | Toggle face detection |
+| `FACE_PRIVACY_BLUR` | `0` | Pixelate detected faces |
+| `ENABLE_ANPR` | `1` | Toggle number-plate recognition |
+| `ENABLE_VIRTUAL_FENCE` | `1` | Toggle zone intrusion detection |
+| `ZONES_CONFIG` | `zones.json` | Zone definition file |
+| `ENABLE_NIGHT_VISION` | `1` | Toggle night-mode enhancement + motion detection |
+| `C2_ENABLED` | auto | Force-enable C2 (auto-on when a webhook URL is set) |
+| `C2_WEBHOOK_URL` | — | C2 HTTP endpoint |
+| `C2_API_KEY` | — | Bearer token for the webhook |
+| `C2_SOURCE_ID` | `site-1` | Site identifier in events |
+| `C2_MQTT_HOST` / `C2_MQTT_PORT` | — / `1883` | Optional MQTT broker |
 
 ---
 
@@ -307,18 +405,36 @@ Each person's behavior history is tracked independently, so one person's movemen
   - Fast movement → running detection
   - Sudden fall → fall detection
   - Object in hand → weapon detection
+  - Hold a printed/on-screen number plate up to the camera (with an OCR backend installed) → ANPR plate read in the dashboard
+  - Walk through the shaded zone on the video feed → *Intrusion Detected* alert (edit `zones.json` to move the zone)
+  - Dim the lights → the dashboard switches to **Night Mode** and moving objects raise *Night-time Movement*
+- Inspect the API directly, e.g. `curl http://localhost:5000/api/detections` and `curl http://localhost:5000/api/c2/status`
+- Persisted output lands in `data/alerts/alerts.jsonl`, `data/events/events.jsonl` and `data/reports/`
+
+### Automated checks
+
+Runs on the standard library alone (it installs lightweight OpenCV / NumPy / Ultralytics
+stand-ins only when those packages are absent, so it works before you install anything):
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+It covers the C2 event schema and real webhook delivery, alert/event/report persistence,
+the virtual-fence state machine (intrusion → dwell → exit → re-entry) and zone validation,
+stock-vs-custom weapon model class handling, and static consistency of `app.py` routes with
+the dashboard's endpoints and element ids.
 
 ---
 
 ## 📌 Future Scope
 
-- Virtual fencing (zone-based intrusion alerts)
 - Multi-camera support
 - ESP32-CAM integration
 - Cloud deployment
-- SMS / Email alerts
-- Database integration
-- Expanded weapon-detection classes via a custom-trained model
+- SMS / Email alerts (beyond the current webhook/MQTT C2 delivery)
+- Database integration (beyond the current file-based store)
+- Add weapons to the custom model by extending `knife.yaml` with your own annotated data
 
 ---
 

@@ -1,4 +1,4 @@
-from flask import Flask, Response, render_template, jsonify
+from flask import Flask, Response, render_template, jsonify, request
 from ultralytics import YOLO
 import mediapipe as mp
 import threading
@@ -16,7 +16,14 @@ import torch
 from ultralytics.nn.tasks import DetectionModel
 import traceback
 
-from object_detector import ObjectDetector  # FIX: use the corrected module
+from object_detector import ObjectDetector, find_weapon_model  # FIX: use the corrected module
+from vehicle_detector import VehicleDetector
+from face_detector import FaceDetector
+from anpr import ANPRReader
+from virtual_fence import VirtualFence
+from night_vision import NightVision
+from c2_integration import C2Client, build_event
+from event_store import EventStore
 
 torch.serialization.add_safe_globals([DetectionModel])
 
@@ -55,6 +62,28 @@ EMA_ALPHA = 0.6
 WEAPON_DETECTION_CONFIDENCE = 0.5
 WEAPON_PROXIMITY_THRESHOLD = 200
 
+
+# ------------------------------------------------------
+# Feature toggles for the added capabilities (env-overridable).
+# ------------------------------------------------------
+def _env_flag(name, default=True):
+    """Read a boolean toggle from the environment (falls back to `default`)."""
+    return os.environ.get(name, "1" if default else "0").strip().lower() in (
+        "1", "true", "yes", "on")
+
+
+ENABLE_VEHICLE_DETECTION = _env_flag("ENABLE_VEHICLE_DETECTION", True)
+ENABLE_FACE_DETECTION = _env_flag("ENABLE_FACE_DETECTION", True)
+ENABLE_ANPR = _env_flag("ENABLE_ANPR", True)
+ENABLE_VIRTUAL_FENCE = _env_flag("ENABLE_VIRTUAL_FENCE", True)
+ENABLE_NIGHT_VISION = _env_flag("ENABLE_NIGHT_VISION", True)
+FACE_PRIVACY_BLUR = _env_flag("FACE_PRIVACY_BLUR", False)
+ALERT_ON_NEW_VEHICLE = _env_flag("ALERT_ON_NEW_VEHICLE", False)
+
+FACE_DETECT_EVERY_N_FRAMES = int(os.environ.get("FACE_DETECT_EVERY_N_FRAMES", "5"))
+ANPR_EVERY_N_FRAMES = int(os.environ.get("ANPR_EVERY_N_FRAMES", "15"))
+CAMERA_ID = os.environ.get("CAMERA_ID", "Cam_1")
+
 # FIX: detect device BEFORE creating either model, so both can be told
 # explicitly which device to use rather than relying on Ultralytics' auto-detect.
 device_in_use = "GPU (CUDA)" if torch.cuda.is_available() else "CPU"
@@ -63,7 +92,32 @@ print(f"Inference device: {device_in_use}")
 print("Note: MediaPipe Pose always runs on CPU regardless of this setting — the "
       "Windows pip build has no GPU delegate. Only the two YOLO calls get the GPU boost.")
 
-object_detector = ObjectDetector("yolov8n.pt", imgsz=320, device=INFERENCE_DEVICE)
+# Prefer a custom weapon checkpoint (Roboflow knife+gun best.pt) when present;
+# otherwise fall back to stock COCO (knife / scissors / baseball bat / bottle).
+WEAPON_MODEL_PATH = find_weapon_model()
+if WEAPON_MODEL_PATH:
+    print(f"Custom weapon model found: {WEAPON_MODEL_PATH}")
+else:
+    print("No custom weapon model found — falling back to the stock COCO model.")
+
+object_detector = ObjectDetector(WEAPON_MODEL_PATH or "yolov8n.pt",
+                                 imgsz=320, device=INFERENCE_DEVICE)
+
+# ------------------------------------------------------
+# Added capability modules (each documented in its own file)
+# ------------------------------------------------------
+vehicle_detector = VehicleDetector()
+face_detector = FaceDetector(enabled=ENABLE_FACE_DETECTION, privacy_blur=FACE_PRIVACY_BLUR)
+anpr_reader = ANPRReader(enabled=ENABLE_ANPR, gpu=torch.cuda.is_available())
+virtual_fence = VirtualFence(enabled=ENABLE_VIRTUAL_FENCE)
+night_vision = NightVision(enabled=ENABLE_NIGHT_VISION)
+c2_client = C2Client()
+event_store = EventStore()
+
+print(f"ANPR backend: {anpr_reader.backend} | Faces: "
+      f"{'on' if face_detector.available else 'unavailable'} | "
+      f"Zones: {len(virtual_fence.list_zones())} | "
+      f"C2: {'on' if c2_client.enabled else 'off'}")
 app = Flask(__name__)
 
 # ------------------------------------------------------
@@ -79,7 +133,19 @@ system_stats = {
     'weapons_detected': 0,
     'system_uptime': time.time(),
     'fps': 0,
-    'pose_detections': 0
+    'pose_detections': 0,
+    'vehicles_detected': 0,
+    'vehicles_in_frame': 0,
+    'vehicles_by_type': {},
+    'faces_in_frame': 0,
+    'plates_read': 0,
+    'intrusions': 0,
+    'night_mode': False,
+    'brightness': 0.0,
+    'motion': False,
+    'c2_enabled': False,
+    'c2_sent': 0,
+    'c2_queued': 0
 }
 
 print("Loading AI models... Please wait...")
@@ -97,6 +163,7 @@ pose = mp_pose.Pose(
 print("AI models loaded successfully!")
 
 last_alert_time = 0
+last_plate_by_track = {}   # track_id -> last plate read (avoids re-alerting the same plate)
 alert_cooldown = 3
 active_weapon_alerts = {}   # (track_id, weapon_label) -> last_seen_time — see FIX note below
 WEAPON_ALERT_TIMEOUT = 6.0  # seconds a weapon can go undetected near this person before
@@ -274,7 +341,7 @@ class PoseAnalyzer:
 pose_analyzer = PoseAnalyzer()
 
 
-def log_alert(alert_type, confidence=0.0, details=""):
+def log_alert(alert_type, confidence=0.0, details="", data=None):
     global alerts_list, system_stats
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     alert_data = {
@@ -282,7 +349,8 @@ def log_alert(alert_type, confidence=0.0, details=""):
         'type': alert_type,
         'confidence': confidence,
         'details': details,
-        'id': len(alerts_list) + 1
+        'id': len(alerts_list) + 1,
+        'data': data or {}
     }
     alerts_list.insert(0, alert_data)
     if len(alerts_list) > 50:
@@ -300,6 +368,52 @@ def log_alert(alert_type, confidence=0.0, details=""):
         system_stats['weapons_detected'] += 1
 
     print(f"ALERT: {alert_type} at {timestamp} - {details}")
+
+    # Persist to disk and forward to any configured Command & Control system.
+    event_store.append_alert(alert_data)
+    try:
+        event = build_event(alert_type, confidence, CAMERA_ID, details,
+                            source_id=c2_client.source_id, data=data)
+        event_store.append_event(event)
+        c2_client.publish(event)
+    except Exception as exc:  # never let integration break the pipeline
+        print(f"[C2] publish failed: {exc}")
+
+
+# ------------------------------------------------------
+# Per-key alert throttling.
+#
+# Unlike the single global `last_alert_time`/`alert_cooldown` pair (where one
+# alert type silences every other one for a few seconds), this keys the
+# cooldown by event identity so unrelated alerts can fire together while
+# repeats of the same event are still suppressed.
+# ------------------------------------------------------
+_throttle_last = {}
+
+
+def alert_throttled(key, alert_type, confidence=0.0, details="", cooldown=5.0, data=None):
+    now = time.time()
+    if now - _throttle_last.get(key, 0.0) < cooldown:
+        return False
+    _throttle_last[key] = now
+    log_alert(alert_type, confidence, details, data=data)
+    return True
+
+
+def _handle_zone_event(ev):
+    """Translate a virtual-fence event into the appropriate alert."""
+    if ev['type'] == 'intrusion':
+        alert_throttled(
+            ('zone-entry', ev['zone'], ev['track_id']), "Intrusion Detected", 0.9,
+            f"{ev['label']} entered restricted zone '{ev['zone']}'", cooldown=5.0,
+            data={'zone': ev['zone'], 'track_id': ev['track_id'], 'label': ev['label']})
+    elif ev['type'] == 'dwell':
+        alert_throttled(
+            ('zone-dwell', ev['zone'], ev['track_id']), "Restricted Zone Dwell", 0.8,
+            f"{ev['label']} loitering in '{ev['zone']}' for {ev.get('seconds', 0)}s",
+            cooldown=15.0,
+            data={'zone': ev['zone'], 'track_id': ev['track_id'],
+                  'seconds': ev.get('seconds')})
 
 
 # ------------------------------------------------------
@@ -376,6 +490,12 @@ def video_processing_thread():
 
         frame_count += 1
         frame = cv2.flip(frame, 1)
+
+        # Night-time / low-light assessment; when dark, `enhanced` is a
+        # brightness-lifted copy used for both detection and display.
+        night_result = night_vision.analyze(frame)
+        frame = night_result['enhanced']
+        night_motion = night_result['motion']
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         # Person detection + tracking
@@ -393,12 +513,68 @@ def video_processing_thread():
             hazardous_detections = last_hazardous_detections
 
         annotated_frame = frame.copy()
+        # Virtual fence zones are drawn first so detections sit on top of them.
+        virtual_fence.draw(annotated_frame)
         person_detected = False
         current_behavior = "idle"
         # FIX: these two are snapshot counts for THIS frame, not running totals —
         # see note above system_stats['total_detections'] below for why.
         persons_in_frame = 0
         poses_in_frame = 0
+
+        # ------------------------------------------------------
+        # Vehicles — reuses the tracker's own boxes (no extra inference).
+        # ------------------------------------------------------
+        vehicle_dets = []
+        if ENABLE_VEHICLE_DETECTION:
+            vehicle_dets = vehicle_detector.process_boxes(
+                getattr(yolo_results, "boxes", None), frame)
+            vehicle_detector.draw(annotated_frame, vehicle_dets)
+            system_stats['vehicles_detected'] = vehicle_detector.total_unique
+            system_stats['vehicles_in_frame'] = len(vehicle_dets)
+            system_stats['vehicles_by_type'] = dict(vehicle_detector.by_type)
+
+            for v in vehicle_dets:
+                vx1, vy1, vx2, vy2 = v['bbox']
+                vcx, vcy = (vx1 + vx2) // 2, (vy1 + vy2) // 2
+                if ENABLE_VIRTUAL_FENCE:
+                    for zone_event in virtual_fence.evaluate(
+                            v['track_id'],
+                            (vcx / frame.shape[1], vcy / frame.shape[0]),
+                            label='vehicle'):
+                        _handle_zone_event(zone_event)
+                if ALERT_ON_NEW_VEHICLE and v['track_id'] >= 0:
+                    alert_throttled(
+                        ('vehicle', v['track_id']), "Vehicle Detected", v['conf'],
+                        f"{v['class_name']} ({v['color']}) detected",
+                        cooldown=1e9,
+                        data={'class': v['class_name'], 'color': v['color']})
+
+        # ------------------------------------------------------
+        # ANPR — number-plate read on vehicles (throttled, cached per track).
+        # ------------------------------------------------------
+        if ENABLE_ANPR and vehicle_dets and frame_count % ANPR_EVERY_N_FRAMES == 0:
+            for v in vehicle_dets[:3]:
+                record = anpr_reader.read_plate(frame, v['bbox'], v['track_id'])
+                if not record:
+                    continue
+                anpr_reader.draw(annotated_frame, record)
+                if last_plate_by_track.get(record['track_id']) != record['plate']:
+                    last_plate_by_track[record['track_id']] = record['plate']
+                    log_alert("ANPR Plate Read", record['confidence'],
+                              f"Plate {record['plate']} on {v['class_name']}",
+                              data={'plate': record['plate'],
+                                    'vehicle': v['class_name'],
+                                    'track_id': record['track_id']})
+        system_stats['plates_read'] = anpr_reader.total_unique
+
+        # ------------------------------------------------------
+        # Faces — Haar cascade on the data bundled with OpenCV (throttled).
+        # ------------------------------------------------------
+        if ENABLE_FACE_DETECTION and frame_count % FACE_DETECT_EVERY_N_FRAMES == 0:
+            face_detector.detect(frame, gray=cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
+            system_stats['faces_in_frame'] = face_detector.last_count
+        face_detector.annotate(annotated_frame, face_detector.last_faces)
 
         # Draw + proximity-check hazardous objects
         for obj in hazardous_detections:
@@ -456,6 +632,9 @@ def video_processing_thread():
 
         # Prune weapon-alert keys that haven't been refreshed recently — lets a
         # genuinely new occurrence (weapon reappears after being gone a while) count again
+        if ENABLE_VIRTUAL_FENCE:
+            virtual_fence.drop_tracks(set(loitering_tracker.keys()))
+
         for wkey, last_seen in list(active_weapon_alerts.items()):
             if now_ts - last_seen > WEAPON_ALERT_TIMEOUT:
                 active_weapon_alerts.pop(wkey, None)
@@ -474,6 +653,14 @@ def video_processing_thread():
 
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                 center_x, center_y = (x1 + x2) // 2, (y1 + y2) // 2
+
+                # Virtual fence check for this person.
+                if ENABLE_VIRTUAL_FENCE:
+                    for zone_event in virtual_fence.evaluate(
+                            track_id,
+                            (center_x / frame.shape[1], center_y / frame.shape[0]),
+                            label='person'):
+                        _handle_zone_event(zone_event)
 
                 detections = [(track_id, x1, y1, x2, y2, "person")]
                 annotated_frame = process_person_detections(detections, annotated_frame, camera_id="Cam_1")
@@ -653,6 +840,8 @@ def video_processing_thread():
                     cv2.putText(annotated_frame, "EMERGENCY: FALL DETECTED",
                                 (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
 
+        night_vision.annotate(annotated_frame)
+
         # System info overlay
         info_y = frame.shape[0] - 80
         cv2.rectangle(annotated_frame, (0, info_y), (frame.shape[1], frame.shape[0]), (0, 0, 0), -1)
@@ -671,6 +860,19 @@ def video_processing_thread():
         # semantics for "how many times has this alert fired").
         system_stats['total_detections'] = persons_in_frame
         system_stats['pose_detections'] = poses_in_frame
+        system_stats['intrusions'] = virtual_fence.intrusions
+        system_stats['night_mode'] = night_vision.night_mode
+        system_stats['brightness'] = round(night_vision.brightness, 1)
+        system_stats['motion'] = night_motion
+        system_stats['c2_enabled'] = c2_client.enabled
+        system_stats['c2_sent'] = c2_client.sent
+        system_stats['c2_queued'] = c2_client.queue.qsize()
+
+        # Night-time movement alert — independent of the YOLO passes and
+        # therefore still works when models struggle with a dark frame.
+        if ENABLE_NIGHT_VISION and night_vision.night_mode and night_motion:
+            alert_throttled('night-motion', "Night-time Movement", 0.6,
+                            "Movement detected in low-light conditions", cooldown=10.0)
 
         if frame_count % 10 == 0:
             system_stats['fps'] = 10.0 / (time.time() - start_time)
@@ -750,16 +952,113 @@ def get_weapon_detections():
 def clear_alerts():
     global alerts_list, system_stats
     alerts_list = []
+    last_plate_by_track.clear()
+    vehicle_detector.reset_stats()
+    anpr_reader.reset_stats()
+    virtual_fence.reset_stats()
+    night_vision.reset_stats()
     system_stats = {
         'total_detections': system_stats['total_detections'],
         'falls_detected': 0,
         'abnormal_behaviors': 0,
         'weapons_detected': 0,
+        'vehicles_detected': 0,
+        'vehicles_in_frame': 0,
+        'vehicles_by_type': {},
+        'faces_in_frame': 0,
+        'plates_read': 0,
+        'intrusions': 0,
         'system_uptime': system_stats['system_uptime'],
         'fps': system_stats['fps'],
         'pose_detections': system_stats['pose_detections']
     }
     return jsonify({'status': 'success', 'message': 'Alerts cleared successfully'})
+
+
+@app.route('/api/detections')
+def get_detections():
+    """Combined snapshot of every detector: vehicles, faces, plates, zones, night."""
+    return jsonify({
+        'vehicles': vehicle_detector.stats(),
+        'faces': face_detector.stats(),
+        'anpr': anpr_reader.stats(),
+        'fence': virtual_fence.stats(),
+        'night': night_vision.stats(),
+        'object_detector': object_detector.stats(),
+    })
+
+
+@app.route('/api/vehicles')
+def get_vehicles():
+    return jsonify(vehicle_detector.stats())
+
+
+@app.route('/api/anpr')
+def get_anpr():
+    return jsonify(anpr_reader.stats())
+
+
+@app.route('/api/faces')
+def get_faces():
+    return jsonify(face_detector.stats())
+
+
+@app.route('/api/zones', methods=['GET', 'POST'])
+def zones():
+    """List zones, or add one with {"name", "points" (>=3 normalised [x,y]), "dwell_seconds"}."""
+    if request.method == 'POST':
+        payload = request.get_json(silent=True) or {}
+        name = payload.get('name')
+        points = payload.get('points')
+        if not name or not points or len(points) < 3:
+            return jsonify({'status': 'error',
+                            'message': 'name and points (>=3 [x,y] pairs) are required'}), 400
+        try:
+            virtual_fence.add_zone(name, points, payload.get('dwell_seconds'))
+        except Exception as exc:
+            return jsonify({'status': 'error', 'message': str(exc)}), 400
+        return jsonify({'status': 'success', 'zones': virtual_fence.list_zones()})
+    return jsonify(virtual_fence.stats())
+
+
+@app.route('/api/zones/<name>', methods=['DELETE'])
+def delete_zone(name):
+    removed = virtual_fence.remove_zone(name)
+    return jsonify({'status': 'success' if removed else 'not_found'})
+
+
+@app.route('/api/c2/status')
+def c2_status():
+    return jsonify(c2_client.status())
+
+
+@app.route('/api/c2/test', methods=['POST'])
+def c2_test():
+    ok = c2_client.send_test()
+    return jsonify({'status': 'success' if ok else 'disabled', 'c2': c2_client.status()})
+
+
+@app.route('/api/report')
+def generate_report():
+    """Build a full snapshot report and persist it under data/reports/."""
+    report = {
+        'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'system': 'Enhanced Smart Surveillance System v2.0',
+        'camera_id': CAMERA_ID,
+        'stats': dict(system_stats),
+        'alerts_recent': alerts_list[:50],
+        'detections': {
+            'vehicles': vehicle_detector.stats(),
+            'faces': face_detector.stats(),
+            'anpr': anpr_reader.stats(),
+            'fence': virtual_fence.stats(),
+            'night': night_vision.stats(),
+            'object_detector': object_detector.stats(),
+        },
+        'storage': event_store.stats(),
+    }
+    report['saved_to'] = event_store.save_report(report)
+    return jsonify(report)
 
 
 if __name__ == '__main__':

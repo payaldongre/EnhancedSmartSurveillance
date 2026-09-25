@@ -32,3 +32,18 @@ seaborn==0.12.2
 # (optional) for advanced tracking later:
 filterpy==1.4.5
 scikit-image==0.20.0
+
+# ---------------------------------------------------------------------------
+# OPTIONAL extras for the added capabilities. The default install above already
+# covers vehicle detection/classification, face detection, virtual fencing and
+# night-time detection (they use OpenCV + the existing models only).
+# ---------------------------------------------------------------------------
+
+# ANPR (number-plate recognition) needs ONE OCR backend. easyocr reuses the
+# torch install from step 4 and needs no extra system binary — recommended.
+# easyocr==1.7.1
+# (alternative: lighter Python side, but requires the Tesseract OCR binary on PATH)
+# pytesseract==0.3.13
+
+# MQTT transport for the Command & Control integration (webhook needs nothing).
+# paho-mqtt==2.1.0

@@ -349,6 +349,96 @@
             color: #FF4500;
         }
         
+        /* ------- Added capability panels (vehicles / ANPR / zones / C2) ------- */
+        .vehicle-card, .anpr-card, .zone-card, .c2-card {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            padding: 2rem;
+            backdrop-filter: blur(15px);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .vehicle-item, .plate-item, .zone-item {
+            background: rgba(0, 150, 255, 0.12);
+            border-left: 4px solid #3AA0FF;
+            padding: 1rem;
+            margin-bottom: 0.8rem;
+            border-radius: 10px;
+            transition: all 0.3s ease;
+        }
+
+        .vehicle-item:hover, .plate-item:hover, .zone-item:hover { transform: translateX(5px); }
+        .plate-item { border-left-color: #FFD166; background: rgba(255, 209, 102, 0.12); }
+        .zone-item { border-left-color: #A0E7A0; background: rgba(160, 231, 160, 0.12); }
+
+        .status-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.6rem;
+            margin: 1rem 0 0.5rem;
+        }
+
+        .chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.4rem 0.9rem;
+            border-radius: 999px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            background: rgba(255, 255, 255, 0.12);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+        }
+
+        .chip-on { background: rgba(76, 175, 80, 0.25); border-color: #4CAF50; color: #B6FFB6; }
+        .chip-off { background: rgba(255, 107, 107, 0.2); border-color: #FF6B6B; color: #FFC9C9; }
+        .chip-night { background: rgba(0, 255, 255, 0.2); border-color: #4ECDC4; color: #CFFCF8; }
+
+        .c2-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px dashed rgba(255, 255, 255, 0.15);
+            font-size: 0.9rem;
+        }
+        .c2-row:last-child { border-bottom: none; }
+        .c2-value { font-weight: bold; }
+
+        .modal-backdrop {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.65);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+        }
+        .modal-backdrop.open { display: flex; }
+        .modal {
+            background: #12203c;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 18px;
+            padding: 1.8rem;
+            max-width: 640px;
+            width: 100%;
+            max-height: 85vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+        }
+        .modal h3 { margin-bottom: 0.6rem; }
+        .knob {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            padding: 0.45rem 0;
+            border-bottom: 1px dashed rgba(255, 255, 255, 0.15);
+            font-size: 0.88rem;
+        }
+        .knob:last-child { border-bottom: none; }
+        .close-btn { margin-top: 1.2rem; }
+
         @media (max-width: 1024px) {
             .container {
                 grid-template-columns: 1fr;
@@ -408,12 +498,12 @@
     
     <div class="header">
         <h1>🤖 Smart Surveillance System</h1>
-        <p>AI-Powered Human Detection • Pose Estimation • Behavior Analysis • Weapon Detection</p>
+        <p>Human &amp; Vehicle Detection • Pose &amp; Behavior Analysis • Weapon, Face &amp; ANPR • Virtual Fence • Night Mode • C2 Integration</p>
         <p><strong>Team:</strong> Payal Dongre, Priyanka Jadhav</p>
     </div>
     
     <div class="features-banner">
-        ✨ Real-time Video Analysis • YOLOv8 Detection • MediaPipe Pose Estimation • Fall Detection • Abnormal Behavior Recognition • Weapon Detection ✨
+        ✨ Real-time Video Analysis • YOLOv8 Tracking • MediaPipe Pose • Fall &amp; Running Detection • Weapon Detection • Vehicle Classification • Face Detection • ANPR • Virtual Fence • Night-Time Movement • C2 Webhooks ✨
     </div>
     
     <div class="container">
@@ -424,6 +514,15 @@
                 Live AI Analysis Feed
             </h2>
             <img id="video-feed" src="/video_feed" alt="Video Feed Loading...">
+
+            <div class="status-chips">
+                <span class="chip" id="chip-night">☀️ Checking light level…</span>
+                <span class="chip chip-on" id="chip-yolo">🔪 Weapons: detecting…</span>
+                <span class="chip" id="chip-faces">🙂 Faces: 0</span>
+                <span class="chip" id="chip-zones">🚧 Zones: 0</span>
+                <span class="chip" id="chip-anpr">🪪 ANPR: checking…</span>
+                <span class="chip" id="chip-c2">🔗 C2: checking…</span>
+            </div>
             
             <div class="controls">
                 <button class="btn" onclick="testAlert()">🧪 Test Alert</button>
@@ -431,7 +530,7 @@
                 <button class="btn" onclick="clearAlerts()">🗑️ Clear Alerts</button>
                 <button class="btn" onclick="toggleSystem()">⏸️ Pause/Resume</button>
                 <button class="btn" onclick="downloadReport()">📊 Generate Report</button>
-                <button class="btn" onclick="calibrateSensitivity()">⚙️ Calibrate</button>
+                <button class="btn" onclick="calibrateSensitivity()">⚙️ Detection Settings</button>
             </div>
             
             <div class="keyboard-shortcuts">
@@ -469,6 +568,22 @@
                         <div class="stat-label">FPS</div>
                     </div>
                     <div class="stat-item">
+                        <div class="stat-value" id="vehicles-detected">0</div>
+                        <div class="stat-label">Vehicles Tracked</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="faces-in-frame">0</div>
+                        <div class="stat-label">Faces In Frame</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="plates-read">0</div>
+                        <div class="stat-label">Plates Read</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="intrusions">0</div>
+                        <div class="stat-label">Zone Intrusions</div>
+                    </div>
+                    <div class="stat-item">
                         <div class="stat-value" id="uptime">00:00</div>
                         <div class="stat-label">System Uptime</div>
                     </div>
@@ -484,6 +599,24 @@
                 </div>
             </div>
             
+            <div class="vehicle-card">
+                <h2 class="card-title">🚗 Vehicle Detection & Classification</h2>
+                <div id="vehicle-summary" style="font-size: 0.9rem; opacity: 0.9;">No vehicles detected.</div>
+                <div class="weapons-list" id="vehicle-list" style="max-height: 200px;"></div>
+            </div>
+
+            <div class="anpr-card">
+                <h2 class="card-title">🪪 ANPR &amp; Face Detection</h2>
+                <div id="anpr-summary" style="font-size: 0.9rem; opacity: 0.9;">ANPR backend: checking…</div>
+                <div class="weapons-list" id="plate-list" style="max-height: 220px;"></div>
+            </div>
+
+            <div class="zone-card">
+                <h2 class="card-title">🚧 Virtual Fence / Restricted Zones</h2>
+                <div id="zone-summary" style="font-size: 0.9rem; opacity: 0.9;">No zones configured.</div>
+                <div class="weapons-list" id="zone-list" style="max-height: 180px;"></div>
+            </div>
+
             <div class="behavior-card">
                 <h2 class="card-title">🏃 Behavior Analysis</h2>
                 <div id="current-behavior">
@@ -497,6 +630,18 @@
                 </div>
             </div>
             
+            <div class="c2-card">
+                <h2 class="card-title">🔗 Command &amp; Control Integration</h2>
+                <div id="c2-body">
+                    <div class="c2-row"><span>Status</span><span class="c2-value" id="c2-enabled">—</span></div>
+                    <div class="c2-row"><span>Transport</span><span class="c2-value" id="c2-transport">—</span></div>
+                    <div class="c2-row"><span>Events sent</span><span class="c2-value" id="c2-sent">0</span></div>
+                    <div class="c2-row"><span>Queued</span><span class="c2-value" id="c2-queued">0</span></div>
+                    <div class="c2-row"><span>Failed</span><span class="c2-value" id="c2-failed">0</span></div>
+                </div>
+                <button class="btn" style="margin-top: 1rem;" onclick="testC2()">📡 Send Test Event</button>
+            </div>
+
             <div class="alerts-card">
                 <h2 class="card-title">🚨 Security Alerts</h2>
                 <div class="alerts-list" id="alerts-list">
@@ -508,6 +653,18 @@
         </div>
     </div>
     
+    <div class="modal-backdrop" id="settings-modal">
+        <div class="modal">
+            <h3>⚙️ Detection Settings</h3>
+            <p style="opacity: 0.85; font-size: 0.9rem; margin-bottom: 1rem;">
+                Live values from the running detectors. Tunables are set through environment
+                variables (see the README) and take effect on restart.
+            </p>
+            <div id="settings-body"><div class="knob"><span>Loading…</span><span></span></div></div>
+            <button class="btn close-btn" onclick="closeSettings()">Close</button>
+        </div>
+    </div>
+
     <div class="footer">
         <p>© 2025 Enhanced Smart Surveillance System | Real-time Computer Vision & Machine Learning</p>
         <p>🔬 Advanced AI Research Project</p>
@@ -543,6 +700,10 @@
                     }
                     
                     document.getElementById('uptime').textContent = uptimeStr;
+                    document.getElementById('vehicles-detected').textContent = data.vehicles_detected || 0;
+                    document.getElementById('faces-in-frame').textContent = data.faces_in_frame || 0;
+                    document.getElementById('plates-read').textContent = data.plates_read || 0;
+                    document.getElementById('intrusions').textContent = data.intrusions || 0;
                 })
                 .catch(error => console.error('Error fetching stats:', error));
         }
@@ -572,7 +733,7 @@
                     const alertsHtml = data.alerts.map(alert => {
                         const alertClass = alert.type.includes('Fall') ? 'behavior-fall' : 
                                          alert.type.includes('Abnormal') ? 'behavior-abnormal' : 
-                                         alert.type.includes('Weapon') ? 'behavior-weapon' : 'behavior-normal';
+                                         alert.type.includes('Weapon') ? 'behavior-weapon' : alert.type.includes('Intrusion') ? 'behavior-abnormal' : alert.type.includes('Dwell') ? 'behavior-abnormal' : alert.type.includes('Night-time') ? 'behavior-abnormal' : 'behavior-normal';
                         
                         return `
                             <div class="alert-item">
@@ -650,6 +811,103 @@
                 });
         }
         
+        function updateDetections() {
+            if (!systemActive) return;
+
+            fetch('/api/detections')
+                .then(response => response.json())
+                .then(data => {
+                    // Vehicles
+                    const v = data.vehicles || {};
+                    const byType = v.by_type || {};
+                    const byColor = v.by_color || {};
+                    const typeBits = Object.keys(byType).map(k => `${byType[k]} ${k}`).join(' • ');
+                    document.getElementById('vehicle-summary').textContent =
+                        `${v.in_frame || 0} in frame • ${v.total_unique || 0} tracked total` +
+                        (typeBits ? ` • ${typeBits}` : '');
+                    const vlist = document.getElementById('vehicle-list');
+                    vlist.innerHTML = Object.keys(byColor).length
+                        ? Object.keys(byColor).map(c =>
+                            `<div class="vehicle-item"><strong>${c}</strong> — ${byColor[c]} tracked</div>`).join('')
+                        : '<div class="no-weapons">No vehicle colour data yet.</div>';
+
+                    // ANPR + faces
+                    const a = data.anpr || {};
+                    document.getElementById('anpr-summary').textContent =
+                        `Backend: ${a.backend} • ${a.plates_read || 0} unique plate(s) read`;
+                    const plist = document.getElementById('plate-list');
+                    plist.innerHTML = (a.recent && a.recent.length)
+                        ? a.recent.map(p =>
+                            `<div class="plate-item"><strong>${p.plate}</strong>
+                               <span style="opacity:.75">(${(p.confidence * 100).toFixed(0)}%)</span>
+                               <div class="alert-time">track ${p.track_id}</div></div>`).join('')
+                        : '<div class="no-weapons">No plates read yet.</div>';
+
+                    const f = data.faces || {};
+                    document.getElementById('chip-faces').textContent = `🙂 Faces: ${f.in_frame || 0}`;
+                    document.getElementById('chip-anpr').textContent =
+                        `🪪 ANPR: ${a.available ? a.backend : 'unavailable'}`;
+
+                    // Virtual fence
+                    const z = data.fence || {};
+                    document.getElementById('zone-summary').textContent =
+                        `${z.zone_count || 0} zone(s) • ${z.intrusions || 0} intrusion(s) • ` +
+                        `${z.dwell_events || 0} dwell event(s)`;
+                    const zlist = document.getElementById('zone-list');
+                    zlist.innerHTML = (z.zones && z.zones.length)
+                        ? z.zones.map(n => `<div class="zone-item">🚧 ${n}</div>`).join('')
+                        : '<div class="no-weapons">No zones configured.</div>';
+                    document.getElementById('chip-zones').textContent = `🚧 Zones: ${z.zone_count || 0}`;
+
+                    // Night mode + weapon model chips
+                    const n = data.night || {};
+                    const nightChip = document.getElementById('chip-night');
+                    nightChip.textContent = n.night_mode
+                        ? `🌙 Night Mode ON (${n.brightness})`
+                        : `☀️ Day Mode (${n.brightness})`;
+                    nightChip.className = 'chip' + (n.night_mode ? ' chip-night' : '');
+                    const od = data.object_detector || {};
+                    document.getElementById('chip-yolo').textContent =
+                        od.custom_weapon_model ? '🔪 Custom weapon model' : '🔪 COCO weapons';
+                    document.getElementById('chip-yolo').className = 'chip chip-on';
+                })
+                .catch(error => console.error('Error fetching detections:', error));
+        }
+
+        function updateC2() {
+            fetch('/api/c2/status')
+                .then(response => response.json())
+                .then(c => {
+                    document.getElementById('c2-enabled').textContent = c.enabled ? 'Enabled' : 'Disabled';
+                    document.getElementById('c2-transport').textContent = c.transport || 'none';
+                    document.getElementById('c2-sent').textContent = c.sent || 0;
+                    document.getElementById('c2-queued').textContent = c.queued || 0;
+                    document.getElementById('c2-failed').textContent = c.failed || 0;
+                    const chip = document.getElementById('chip-c2');
+                    chip.textContent = `🔗 C2: ${c.enabled ? 'on' : 'off'}`;
+                    chip.className = 'chip ' + (c.enabled ? 'chip-on' : 'chip-off');
+                })
+                .catch(error => console.error('Error fetching C2 status:', error));
+        }
+
+        function testC2() {
+            fetch('/api/c2/test', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        alert('✅ Test event queued to the connected C2 system.');
+                    } else {
+                        alert('ℹ️ C2 integration is disabled.\n\nSet C2_WEBHOOK_URL (and optionally C2_API_KEY) in your environment to enable it.');
+                    }
+                    updateC2();
+                })
+                .catch(() => alert('Could not reach /api/c2/test.'));
+        }
+
+        function closeSettings() {
+            document.getElementById('settings-modal').classList.remove('open');
+        }
+
         function showEmergencyBanner() {
             const banner = document.getElementById('emergency-banner');
             banner.style.display = 'block';
@@ -683,6 +941,9 @@
             updateWeapons();
             updateBehaviorAnalysis();
             
+            updateDetections();
+            updateC2();
+
             // Visual feedback
             const btn = event.target;
             const originalText = btn.textContent;
@@ -792,7 +1053,37 @@
         }
         
         function calibrateSensitivity() {
-            alert('🔧 Calibration feature coming soon!\n\nThis will allow you to adjust:\n• Fall detection sensitivity\n• Movement thresholds\n• Alert frequencies\n• Pose estimation accuracy\n• Weapon detection sensitivity');
+            const modal = document.getElementById('settings-modal');
+            const body = document.getElementById('settings-body');
+            modal.classList.add('open');
+            body.innerHTML = '<div class="knob"><span>Loading…</span><span></span></div>';
+
+            Promise.all([
+                fetch('/api/detections').then(r => r.json()).catch(() => ({})),
+                fetch('/api/stats').then(r => r.json()).catch(() => ({}))
+            ]).then(([d, s]) => {
+                const od = d.object_detector || {};
+                const a = d.anpr || {};
+                const f = d.faces || {};
+                const z = d.fence || {};
+                const n = d.night || {};
+                const rows = [
+                    ['Weapon model', (od.model || 'n/a') + (od.custom_weapon_model ? ' (custom-trained)' : ' (stock COCO)')],
+                    ['Hazardous classes', (od.hazardous_classes || []).join(', ') || '—'],
+                    ['ANPR backend', (a.available ? a.backend : 'unavailable')],
+                    ['Face detection', f.available ? 'available' : 'unavailable'],
+                    ['Face privacy blur', f.privacy_blur ? 'on' : 'off'],
+                    ['Current brightness', n.brightness],
+                    ['Night threshold', 'brightness < 60 (env: none — edit night_vision.py)'],
+                    ['Virtual zones', `${z.zone_count || 0} (edit zones.json or POST /api/zones)`],
+                    ['Behaviour window', 'RUNNING_DETECTION_FRAMES = 15'],
+                    ['Alert cooldown', '3s global + per-key throttles'],
+                    ['Camera id', 'CAMERA_ID env (default Cam_1)'],
+                    ['Live FPS', (s.fps || 0)]
+                ];
+                body.innerHTML = rows.map(([k, v]) =>
+                    `<div class="knob"><span>${k}</span><span class="c2-value">${v}</span></div>`).join('');
+            });
         }
         
         // Keyboard shortcuts
@@ -826,6 +1117,8 @@
                 updateAlerts();
                 updateWeapons();
                 updateBehaviorAnalysis();
+                updateDetections();
+                updateC2();
             }
         }, 2000);
         
@@ -834,6 +1127,8 @@
         updateAlerts();
         updateWeapons();
         updateBehaviorAnalysis();
+        updateDetections();
+        updateC2();
         
         // Handle page visibility changes
         document.addEventListener('visibilitychange', function() {
@@ -842,6 +1137,8 @@
                 updateAlerts();
                 updateWeapons();
                 updateBehaviorAnalysis();
+                updateDetections();
+                updateC2();
             }
         });
         
@@ -852,7 +1149,7 @@
         };
         
         console.log('🚀 Smart Surveillance Dashboard Loaded');
-        console.log('📊 Monitoring: Human Detection, Pose Estimation, Behavior Analysis, Weapon Detection');
+        console.log('📊 Monitoring: Human Detection, Pose, Behavior, Weapons, Vehicles, Faces, ANPR, Virtual Fence, Night Mode, C2');
     </script>
 </body>
 </html>
