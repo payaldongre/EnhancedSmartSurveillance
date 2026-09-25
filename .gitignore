@@ -18,6 +18,8 @@ __pycache__/
 *.pt
 *.pth
 *.h5
+*.onnx
+*.engine
 
 # -----------------------
 # DATA & OUTPUTS
