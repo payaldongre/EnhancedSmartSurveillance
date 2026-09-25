@@ -1,3 +1,4 @@
+# Backend
 flask==2.3.3
 
 # Computer Vision
@@ -6,9 +7,12 @@ Pillow==10.0.1
 
 # Deep Learning - YOLOv8 (Ultralytics) + PyTorch
 ultralytics==8.0.196
-torch
-torchvision==0.20.1
-torchaudio==2.5.1
+# torch / torchvision / torchaudio are intentionally NOT installed via this file —
+# the correct wheel depends on your hardware (NVIDIA GPU + CUDA version, or
+# CPU-only). See README.md step 4 for the exact install command for your machine.
+# torch==2.5.1
+# torchvision==0.20.1
+# torchaudio==2.5.1
 
 # Pose Estimation
 mediapipe==0.10.7
@@ -23,7 +27,7 @@ python-dateutil==2.8.2
 matplotlib==3.7.2
 seaborn==0.12.2
 
-tensorflow  # or a TF version compatible with your environment; install only if you will train/load Keras models
+# tensorflow  # or a TF version compatible with your environment; install only if you will train/load Keras models
 
 # (optional) for advanced tracking later:
 filterpy==1.4.5
