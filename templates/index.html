@@ -61,29 +61,39 @@
             50% { background-position: 100% 50%; }
         }
         
+        /* Issue 3: responsive layout. The live feed is the dominant element and the
+           stats/alerts/behaviour panels stack underneath it on narrow screens; they
+           only sit side-by-side when there is real room for it (see the min-width
+           media query further down). */
         .container {
             display: grid;
-            grid-template-columns: 2fr 1fr;
+            grid-template-columns: minmax(0, 1fr);
             gap: 1.5rem;
             padding: 1.5rem;
-            max-width: 1600px;
+            max-width: 1800px;
             margin: 0 auto;
         }
         
         .video-section {
             background: rgba(255, 255, 255, 0.1);
             border-radius: 20px;
-            padding: 2rem;
+            padding: 1.25rem;
             backdrop-filter: blur(15px);
             box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
             border: 1px solid rgba(255, 255, 255, 0.2);
+            display: flex;
+            flex-direction: column;
+            gap: 0.9rem;
+            min-width: 0;
         }
         
         .video-section h2 {
-            margin-bottom: 1.5rem;
-            font-size: 1.8rem;
+            margin-bottom: 0;
+            font-size: 1.6rem;
             display: flex;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 0.35rem;
         }
         
         .status-indicator {
@@ -102,11 +112,28 @@
             100% { opacity: 1; transform: scale(1); }
         }
         
-        #video-feed {
+        /* Full-width video: no fixed pixel size, and object-fit keeps the correct
+           aspect for both a landscape webcam and a portrait phone stream. */
+        .video-stage {
+            display: flex;
+            align-items: center;
+            justify-content: center;
             width: 100%;
+            background: #040b16;
             border-radius: 15px;
-            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
             border: 2px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+            overflow: hidden;
+        }
+
+        #video-feed {
+            display: block;
+            width: 100%;
+            height: auto;
+            max-width: 100%;
+            max-height: 78vh;      /* never taller than the viewport */
+            object-fit: contain;
+            border-radius: 12px;
         }
         
         .controls {
@@ -392,6 +419,7 @@
         }
 
         .chip-on { background: rgba(76, 175, 80, 0.25); border-color: #4CAF50; color: #B6FFB6; }
+        .chip-warn { background: rgba(255, 176, 32, 0.2); border-color: #FFB020; color: #FFE2AE; }
         .chip-off { background: rgba(255, 107, 107, 0.2); border-color: #FF6B6B; color: #FFC9C9; }
         .chip-night { background: rgba(0, 255, 255, 0.2); border-color: #4ECDC4; color: #CFFCF8; }
 
@@ -439,27 +467,82 @@
         .knob:last-child { border-bottom: none; }
         .close-btn { margin-top: 1.2rem; }
 
-        @media (max-width: 1024px) {
+        /* Side-by-side video + panels only on wide screens (desktop/laptop). */
+        @media (min-width: 1100px) {
             .container {
-                grid-template-columns: 1fr;
+                grid-template-columns: minmax(0, 3fr) minmax(320px, 1fr);
+                align-items: start;
             }
-            
-            .header h1 {
-                font-size: 2rem;
+
+            .video-section {
+                padding: 1.5rem;
             }
-            
-            .controls {
-                grid-template-columns: repeat(2, 1fr);
+
+            .sidebar {
+                max-height: calc(100vh - 2rem);
+                overflow-y: auto;
+                padding-right: 0.35rem;
+            }
+
+            #video-feed {
+                max-height: 72vh;
+            }
+        }
+
+        @media (min-width: 1600px) {
+            .container {
+                grid-template-columns: minmax(0, 3.4fr) minmax(360px, 1fr);
+            }
+
+            #video-feed {
+                max-height: 78vh;
             }
         }
         
+        /* Tablet / phone: everything stacks under the video. */
         @media (max-width: 768px) {
+            .container {
+                padding: 0.85rem;
+                gap: 1rem;
+            }
+
+            .video-section {
+                padding: 0.85rem;
+                border-radius: 16px;
+            }
+
+            .header h1 {
+                font-size: 1.6rem;
+            }
+
+            .header p {
+                font-size: 0.95rem;
+            }
+
             .controls {
                 grid-template-columns: 1fr;
             }
             
             .stats-grid {
                 grid-template-columns: 1fr;
+            }
+
+            #video-feed {
+                max-height: 62vh;
+            }
+
+            .modal {
+                padding: 1.2rem;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .header h1 {
+                font-size: 1.35rem;
+            }
+
+            #video-feed {
+                max-height: 55vh;
             }
         }
         
@@ -496,6 +579,9 @@
             margin: 0.75rem 0 0.25rem;
         }
         .camera-tab {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
             padding: 0.35rem 0.8rem;
             border-radius: 999px;
             border: 1px solid rgba(120, 200, 255, 0.35);
@@ -505,6 +591,17 @@
             cursor: pointer;
             transition: background 0.15s, border-color 0.15s;
         }
+
+        /* Per-camera connection state reported by /api/cameras */
+        .cam-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            background: #FFB020;
+        }
+        .cam-dot.live { background: #4CAF50; box-shadow: 0 0 6px #4CAF50; }
+        .cam-dot.error { background: #FF5252; box-shadow: 0 0 6px #FF5252; }
         .camera-tab:hover { border-color: rgba(120, 200, 255, 0.7); }
         .camera-tab.active {
             background: rgba(60, 140, 220, 0.35);
@@ -535,11 +632,14 @@
                 <span class="pose-indicator"></span>
                 Live AI Analysis Feed
             </h2>
-            <img id="video-feed" src="/video_feed" alt="Video Feed Loading...">
+            <div class="video-stage">
+                <img id="video-feed" src="/video_feed" alt="Video Feed Loading...">
+            </div>
 
             <div class="camera-tabs" id="camera-tabs"></div>
 
             <div class="status-chips">
+                <span class="chip" id="chip-connection">🎥 Connecting…</span>
                 <span class="chip" id="chip-night">☀️ Checking light level…</span>
                 <span class="chip chip-on" id="chip-yolo">🔪 Weapons: detecting…</span>
                 <span class="chip" id="chip-faces">🙂 Faces: 0</span>
@@ -1149,20 +1249,52 @@
         
         let activeCameraId = null;
 
+        // Connection state reported per camera by /api/cameras (Issue 1):
+        // "connecting" / "live" / "reconnecting" / "error: <reason>".
+        function cameraStatusClass(status) {
+            if (!status) return 'chip';
+            if (status.indexOf('live') === 0) return 'chip chip-on';
+            if (status.indexOf('error') === 0) return 'chip chip-off';
+            return 'chip chip-warn';
+        }
+
+        function cameraDotClass(status) {
+            if (!status) return 'pending';
+            if (status.indexOf('live') === 0) return 'live';
+            if (status.indexOf('error') === 0) return 'error';
+            return 'pending';
+        }
+
         function loadCameras() {
             fetch('/api/cameras')
                 .then(response => response.json())
                 .then(data => {
                     const tabs = document.getElementById('camera-tabs');
-                    if (!tabs || !data.cameras || data.cameras.length < 2) return;
+                    if (!tabs || !data.cameras || !data.cameras.length) return;
                     const defaultCam = data.cameras.find(c => c.detect) || data.cameras[0];
                     const selected = activeCameraId || defaultCam.camera_id;
-                    tabs.innerHTML = data.cameras.map(c =>
-                        `<button class="camera-tab${c.camera_id === selected ? ' active' : ''}" ` +
-                        `data-camera="${c.camera_id}" ` +
-                        `onclick="selectCamera('${c.camera_id}')">` +
-                        `${c.camera_id}${c.detect ? ' • AI' : ''}</button>`
-                    ).join('');
+                    activeCameraId = selected;
+                    tabs.innerHTML = data.cameras.map(c => {
+                        const state = c.status || (c.running ? 'live' : 'connecting');
+                        return `<button class="camera-tab${c.camera_id === selected ? ' active' : ''}" ` +
+                            `data-camera="${c.camera_id}" ` +
+                            `title="${c.source} — ${state}` +
+                            (c.resolution ? ` @ ${c.resolution}` : '') + `" ` +
+                            `onclick="selectCamera('${c.camera_id}')">` +
+                            `<span class="cam-dot ${cameraDotClass(state)}"></span>` +
+                            `${c.camera_id}${c.detect ? ' • AI' : ''}` +
+                            `${c.fps ? ' • ' + c.fps + ' fps' : ''}</button>`;
+                    }).join('');
+
+                    const current = data.cameras.find(c => c.camera_id === selected) || defaultCam;
+                    const state = current.status || (current.running ? 'live' : 'connecting');
+                    const chip = document.getElementById('chip-connection');
+                    if (chip) {
+                        chip.textContent = `🎥 ${selected}: ${state}` +
+                            (current.resolution ? ` • ${current.resolution}` : '') +
+                            (current.fps ? ` • ${current.fps} fps` : '');
+                        chip.className = cameraStatusClass(state);
+                    }
                 })
                 .catch(() => {});
         }
@@ -1173,6 +1305,7 @@
             document.querySelectorAll('.camera-tab').forEach(function (btn) {
                 btn.classList.toggle('active', btn.getAttribute('data-camera') === cameraId);
             });
+            loadCameras();   // refresh the status chip for the camera just selected
         }
 
         // Initial load

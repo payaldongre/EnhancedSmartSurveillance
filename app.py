@@ -82,9 +82,14 @@ ENABLE_NIGHT_VISION = _env_flag("ENABLE_NIGHT_VISION", True)
 FACE_PRIVACY_BLUR = _env_flag("FACE_PRIVACY_BLUR", False)
 ALERT_ON_NEW_VEHICLE = _env_flag("ALERT_ON_NEW_VEHICLE", False)
 
-FACE_DETECT_EVERY_N_FRAMES = int(os.environ.get("FACE_DETECT_EVERY_N_FRAMES", "5"))
+# Issue 2: face detection (a Haar cascade over the full frame) and ANPR OCR are
+# the CPU-bound extras that are easy to keep paying for even when nothing relevant
+# is on screen. They are now throttled harder AND gated on there actually being a
+# person / vehicle in frame. Read the [Timing] breakdown logged by
+# video_processing_thread before tuning these further.
+FACE_DETECT_EVERY_N_FRAMES = int(os.environ.get("FACE_DETECT_EVERY_N_FRAMES", "8"))
 ANPR_EVERY_N_FRAMES = int(os.environ.get("ANPR_EVERY_N_FRAMES", "15"))  # used for id-less vehicles
-ANPR_MAX_NEW_PER_FRAME = int(os.environ.get("ANPR_MAX_NEW_PER_FRAME", "2"))
+ANPR_MAX_NEW_PER_FRAME = int(os.environ.get("ANPR_MAX_NEW_PER_FRAME", "1"))
 # Camera list. The cameras live in cameras.py so you can add/remove them in
 # code (no `set` command needed); the FIRST entry is the analytics camera that
 # runs the full AI pipeline, and any further entries stream live to the same
@@ -93,8 +98,12 @@ ANPR_MAX_NEW_PER_FRAME = int(os.environ.get("ANPR_MAX_NEW_PER_FRAME", "2"))
 # Fallbacks, used only when cameras.py defines no cameras:
 #   CAMERA_SOURCES (comma-separated `id=source` entries), then the legacy
 #   CAMERA_ID / CAMERA_INDEX pair.
-DEFAULT_CAMERA_WIDTH = int(os.environ.get("CAMERA_WIDTH", "640"))
-DEFAULT_CAMERA_HEIGHT = int(os.environ.get("CAMERA_HEIGHT", "480"))
+# Issue 3: the dashboard now shows the feed full-width, where 640x480 looked soft
+# once stretched. 1280x720 is the new default; a per-camera width/height in
+# cameras.py still wins, and narrower resolutions cost less CPU per frame — the
+# [Timing] log shows what the extra pixels actually cost on your machine.
+DEFAULT_CAMERA_WIDTH = int(os.environ.get("CAMERA_WIDTH", "1280"))
+DEFAULT_CAMERA_HEIGHT = int(os.environ.get("CAMERA_HEIGHT", "720"))
 
 
 def _camera_entries_from_env():
@@ -205,6 +214,10 @@ def _camera_listing():
         'source': CAMERA_INDEX,
         'detect': True,
         'running': latest_frame is not None,
+        # "connecting" / "live" / "reconnecting" / "error: <reason>"
+        'status': _PRIMARY_GRABBER.status if _PRIMARY_GRABBER is not None else "connecting",
+        'resolution': (_PRIMARY_GRABBER.resolution() if _PRIMARY_GRABBER is not None
+                       else f"{CAMERA_WIDTH}x{CAMERA_HEIGHT} (requested)"),
         'fps': round(system_stats.get('fps', 0), 1),
     }]
     cams += [cam.public_stats() for cam in _STREAM_CAMERAS]
@@ -219,6 +232,9 @@ app = Flask(__name__)
 latest_frame = None
 lock = threading.Lock()
 alerts_list = []
+# The analytics camera's FrameGrabber (assigned in video_processing_thread); read
+# by /api/cameras so the dashboard can show a real per-camera connection status.
+_PRIMARY_GRABBER = None
 system_stats = {
     'total_detections': 0,
     'falls_detected': 0,
@@ -512,51 +528,208 @@ def _handle_zone_event(ev):
 
 
 # ------------------------------------------------------
-# FIX: dedicated capture thread, decoupled from inference.
+# Capture reliability (Issue 1) + per-stage timing (Issue 2).
 #
-# Previously cap.read() happened inline in the same loop as all the AI
-# inference, so if inference for a frame took (say) 200ms, the next
-# cap.read() only happened after that — frames pile up in the camera's
-# internal buffer and what you see on screen visibly lags real time.
-# This grabber thread continuously reads frames as fast as the camera
-# provides them and always keeps only the newest one; the processing loop
-# below picks up whatever is freshest when it's ready, so the stream
-# self-corrects instead of accumulating backlog. You'll see occasional
-# dropped frames under load rather than growing lag, which is the right
-# tradeoff for a live monitoring feed.
+# The grabber below is still a dedicated capture thread decoupled from
+# inference (so the stream keeps only the newest frame instead of building up
+# lag), but it now also owns its own reconnection: the previous version opened
+# cv2.VideoCapture(source) once with no retry, so a phone/IP camera that
+# dropped mid-session killed its feed for the rest of the run.
 # ------------------------------------------------------
+CAMERA_RECONNECT_AFTER_FAILURES = int(
+    os.environ.get("CAMERA_RECONNECT_AFTER_FAILURES", "20"))
+CAMERA_RECONNECT_BACKOFF_START = 1.0   # seconds before the first reopen attempt
+CAMERA_RECONNECT_BACKOFF_MAX = 10.0    # backoff ceiling — retries continue forever
+CAMERA_OPEN_TIMEOUT_MSEC = int(os.environ.get("CAMERA_OPEN_TIMEOUT_MSEC", "8000"))
+
+_OPEN_TIMEOUT_PROP = getattr(cv2, "CAP_PROP_OPEN_TIMEOUT_MSEC", None)
+_READ_TIMEOUT_PROP = getattr(cv2, "CAP_PROP_READ_TIMEOUT_MSEC", None)
+
+# Issue 2: how often the per-stage timing breakdown is logged (in frames).
+STAGE_REPORT_EVERY_N_FRAMES = int(os.environ.get("STAGE_REPORT_EVERY_N_FRAMES", "30"))
+STAGE_NAMES = ("night_vision", "person_tracking", "object_detection", "vehicle",
+               "anpr", "face", "pose")
+
+
+def _log_stage_timing(stage_ms, frames, persons, poses):
+    """Log the measured per-frame cost of every pipeline stage.
+
+    Read THIS before tuning any throttle — it says where the time actually goes.
+    `other` is the loop's own bookkeeping / drawing / JPEG-encode remainder.
+    """
+    frames = max(1, frames)
+    total = stage_ms.get("frame_total", 0.0) / frames
+    parts = []
+    accounted = 0.0
+    for name in STAGE_NAMES:
+        ms = stage_ms.get(name, 0.0) / frames
+        accounted += ms
+        parts.append(f"{name}={ms:.1f}ms")
+    other = max(0.0, total - accounted)
+    print(f"[Timing] avg/frame over {frames} frames: total={total:.0f}ms "
+          f"(throughput ~{1000.0 / max(total, 1e-6):.1f} fps) | "
+          f"people={persons} poses={poses} | " + " ".join(parts) +
+          f" | other={other:.1f}ms")
+    if torch.cuda.is_available():
+        alloc = torch.cuda.memory_allocated() / (1024 * 1024)
+        reserved = torch.cuda.memory_reserved() / (1024 * 1024)
+        print(f"[GPU] torch.cuda allocated={alloc:.0f}MB reserved={reserved:.0f}MB "
+              "(non-zero / growing means this run really is inferring on CUDA)")
 class FrameGrabber:
+    """Continuously capture from `source`, reconnecting on its own when it drops.
+
+    `status` is one of "connecting", "live", "reconnecting" or "error: <reason>"
+    and is published per camera through /api/cameras, so the dashboard shows the
+    real connection state instead of a console-only message.
+    """
+
     def __init__(self, source=0, width=640, height=480):
-        # A numeric source (or numeric string) is a local camera index and uses the
-        # DirectShow backend on Windows; any other string (a video-file path or an
-        # RTSP/HTTP stream URL) is opened directly so network/IP cameras and
-        # recorded clips also work.
+        # A numeric source (or numeric string) is a local camera index; any other
+        # string (a video-file path, or an RTSP/HTTP stream URL such as a phone
+        # running an "IP Webcam" style app) is opened as a stream.
         if isinstance(source, str) and source.strip().isdigit():
             source = int(source.strip())
-        if isinstance(source, int) and sys.platform.startswith("win"):
-            self.cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
-        else:
-            self.cap = cv2.VideoCapture(source)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # ask the driver for a shallow buffer too
+        self.source = source
+        self.width = width
+        self.height = height
+
         self.lock = threading.Lock()
         self.frame = None
         self.frame_id = 0
-        self.running = self.cap.isOpened()
-        if self.running:
-            self.thread = threading.Thread(target=self._loop, daemon=True)
-            self.thread.start()
+        self.frame_size = None          # actual (w, h), known once frames arrive
+        self.cap = None
+        self.consecutive_failures = 0
+        self.connected_once = False
+        self.status = "connecting"
+        self._backoff = CAMERA_RECONNECT_BACKOFF_START
 
+        # The capture thread always runs: it owns reconnection, so a camera that
+        # is absent at startup (or drops later) recovers by itself.
+        self.running = True
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+        self.thread.start()
+
+    # ------------------------------------------------------------ open / close
+    def _candidate_backends(self):
+        """Backend hints to try, in order.
+
+        A local device index keeps DirectShow on Windows (previous behaviour).
+        Any non-numeric source is tried with the default backend first and then
+        with FFMPEG explicitly — FFMPEG's HTTP/RTSP handling is the part that
+        makes an IP-Webcam style stream come back reliably.
+        """
+        if isinstance(self.source, int):
+            return [cv2.CAP_DSHOW] if sys.platform.startswith("win") else [cv2.CAP_ANY]
+        return [cv2.CAP_ANY, cv2.CAP_FFMPEG]
+
+    def _open_capture(self):
+        """Open the source. Returns (cap, error_message), with cap=None on failure."""
+        params = []
+        if not isinstance(self.source, int):
+            # Connect/read timeout: a bad IP or an unreachable phone must fail the
+            # open quickly instead of hanging startup (or a reconnect) for minutes.
+            if _OPEN_TIMEOUT_PROP is not None:
+                params += [int(_OPEN_TIMEOUT_PROP), int(CAMERA_OPEN_TIMEOUT_MSEC)]
+            if _READ_TIMEOUT_PROP is not None:
+                params += [int(_READ_TIMEOUT_PROP), int(CAMERA_OPEN_TIMEOUT_MSEC)]
+
+        last_error = f"could not open {self.source!r}"
+        for backend in self._candidate_backends():
+            cap = None
+            try:
+                if params:
+                    try:
+                        cap = cv2.VideoCapture(self.source, backend, params)
+                    except TypeError:
+                        # OpenCV built without the params overload — open plainly.
+                        cap = cv2.VideoCapture(self.source, backend)
+                else:
+                    cap = cv2.VideoCapture(self.source, backend)
+            except Exception as exc:
+                last_error = str(exc)
+                continue
+            if cap is not None and cap.isOpened():
+                try:
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # shallow buffer: prefer fresh frames
+                except Exception:
+                    pass
+                return cap, ""
+            if cap is not None:
+                cap.release()
+            last_error = (f"backend {backend} could not open {self.source!r} "
+                          "(no device / bad URL / unreachable host)")
+        return None, last_error
+
+    def _release_cap(self):
+        cap, self.cap = self.cap, None
+        if cap is not None:
+            try:
+                cap.release()
+            except Exception:
+                pass
+
+    def _sleep_backoff(self):
+        """Wait the current backoff, then grow it (capped) for the next attempt."""
+        time.sleep(self._backoff)
+        self._backoff = min(self._backoff * 2, CAMERA_RECONNECT_BACKOFF_MAX)
+
+    # ------------------------------------------------------------------- loop
     def _loop(self):
         while self.running:
-            success, frame = self.cap.read()
-            if not success:
-                time.sleep(0.01)
+            if self.cap is None:
+                self.status = "reconnecting" if self.connected_once else "connecting"
+                cap, error = self._open_capture()
+                if cap is None:
+                    # Never give up: publish the reason and retry forever.
+                    self.status = f"error: {error}"
+                    print(f"[FrameGrabber] {self.source!r}: {error} — retrying in "
+                          f"{self._backoff:.0f}s")
+                    self._sleep_backoff()
+                    continue
+                self.cap = cap
+                self.connected_once = True
+                self.consecutive_failures = 0
+                self._backoff = CAMERA_RECONNECT_BACKOFF_START
+                self.status = "live"
+                print(f"[FrameGrabber] {self.source!r} connected (live)")
                 continue
-            with self.lock:
-                self.frame = frame
-                self.frame_id += 1
+
+            try:
+                success, frame = self.cap.read()
+            except Exception as exc:      # some backends raise instead of returning False
+                if self.consecutive_failures == 0:
+                    print(f"[FrameGrabber] {self.source!r}: read raised {exc}")
+                success, frame = False, None
+
+            if success and frame is not None:
+                self.consecutive_failures = 0
+                self._backoff = CAMERA_RECONNECT_BACKOFF_START
+                self.status = "live"
+                self.frame_size = (frame.shape[1], frame.shape[0])
+                with self.lock:
+                    self.frame = frame
+                    self.frame_id += 1
+                continue
+
+            # Failed read — reopen the capture after enough consecutive failures.
+            self.consecutive_failures += 1
+            if self.consecutive_failures >= CAMERA_RECONNECT_AFTER_FAILURES:
+                print(f"[FrameGrabber] {self.source!r}: "
+                      f"{self.consecutive_failures} failed reads in a row — reconnecting")
+                self.status = "reconnecting"
+                self.consecutive_failures = 0
+                self._release_cap()
+                self._sleep_backoff()
+            else:
+                time.sleep(0.01)
+
+    def resolution(self):
+        """Actual captured resolution, or the requested one before any frame."""
+        if self.frame_size:
+            return f"{self.frame_size[0]}x{self.frame_size[1]}"
+        return f"{self.width}x{self.height} (requested)"
 
     def get_latest(self):
         with self.lock:
@@ -564,7 +737,7 @@ class FrameGrabber:
 
     def release(self):
         self.running = False
-        self.cap.release()
+        self._release_cap()
 
 
 class StreamCamera:
@@ -585,7 +758,9 @@ class StreamCamera:
         self.latest_frame = None
         self._lock = threading.Lock()
         self.grabber = FrameGrabber(source, width, height)
-        self.running = self.grabber.running
+        # The stream thread stays up while the grabber reconnects in the
+        # background, so a camera that is absent at startup is not disabled for good.
+        self.running = True
         self._last_frame_id = -1
         self.fps = 0.0
         self.thread = None
@@ -595,12 +770,10 @@ class StreamCamera:
         self.thread.start()
 
     def _run(self):
-        if not self.grabber.running:
-            print(f"[Camera {self.id}] ERROR: could not open source {self.source!r}. "
-                  "Check the index/URL (a phone must be on the same Wi-Fi and an "
-                  "IP-Webcam URL usually ends in /video).")
-            return
-        print(f"[Camera {self.id}] opened {self.source!r} "
+        # The grabber reconnects on its own, so this thread simply waits while the
+        # camera is absent and resumes as soon as it comes back. The live status is
+        # published through /api/cameras instead of a one-off console message.
+        print(f"[Camera {self.id}] streaming {self.source!r} "
               f"(live view — AI detection runs on {CAMERA_ID})")
         count = 0
         start_time = time.time()
@@ -628,7 +801,9 @@ class StreamCamera:
             'camera_id': self.id,
             'source': self.source,
             'detect': False,
-            'running': self.running and self.latest_frame is not None,
+            'running': self.latest_frame is not None,
+            'status': self.grabber.status,
+            'resolution': self.grabber.resolution(),
             'fps': round(self.fps, 1),
         }
 
@@ -642,18 +817,22 @@ _STREAM_BY_ID = {cam.id: cam for cam in _STREAM_CAMERAS}
 
 def video_processing_thread():
     global latest_frame, last_alert_time, system_stats, loitering_tracker
-    global last_hazardous_detections
+    global last_hazardous_detections, _PRIMARY_GRABBER
 
     grabber = FrameGrabber(CAMERA_INDEX, CAMERA_WIDTH, CAMERA_HEIGHT)
-    if not grabber.running:
-        print("Error: Could not open webcam")
-        return
-    print("Webcam opened successfully")
+    _PRIMARY_GRABBER = grabber
+    print(f"Capture started for camera {CAMERA_ID} ({CAMERA_INDEX!r}) — the grabber "
+          "reconnects automatically if the feed drops (status on /api/cameras)")
     print("Starting video processing with pose estimation...")
 
     frame_count = 0
     start_time = time.time()
     last_processed_frame_id = -1
+    # Issue 2: per-stage millisecond totals for the current reporting window.
+    # _log_stage_timing() prints the breakdown every STAGE_REPORT_EVERY_N_FRAMES
+    # frames so the real bottleneck is measured instead of guessed.
+    stage_ms = defaultdict(float)
+    stage_frames = 0
 
     while True:
         frame_start = time.time()
@@ -670,24 +849,45 @@ def video_processing_thread():
 
         # Night-time / low-light assessment; when dark, `enhanced` is a
         # brightness-lifted copy used for both detection and display.
+        _t = time.perf_counter()
         night_result = night_vision.analyze(frame)
+        stage_ms['night_vision'] += (time.perf_counter() - _t) * 1000
         frame = night_result['enhanced']
         night_motion = night_result['motion']
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         # Person detection + tracking
+        _t = time.perf_counter()
         yolo_results = model.track(
             frame, persist=True, imgsz=PERSON_IMGSZ,
             tracker=PERSON_TRACKER, device=INFERENCE_DEVICE, verbose=False
         )[0]
+        stage_ms['person_tracking'] += (time.perf_counter() - _t) * 1000
 
         # FIX: throttle the heaviest call (hazardous-object detection) instead
         # of running it on every single frame; reuse last result in between.
         if frame_count % OBJECT_DETECT_EVERY_N_FRAMES == 0:
+            _t = time.perf_counter()
             all_detections, hazardous_detections = object_detector.detect_objects(frame)
+            stage_ms['object_detection'] += (time.perf_counter() - _t) * 1000
             last_hazardous_detections = hazardous_detections
         else:
             hazardous_detections = last_hazardous_detections
+
+        # Cheapest person-presence signal available (the tracker's own boxes).
+        # Issue 2: face detection used to run on the throttled schedule even with
+        # nobody in frame — this gates it the same way ANPR is already gated on
+        # vehicles actually being present.
+        person_in_frame = False
+        _boxes = getattr(yolo_results, "boxes", None)
+        if _boxes is not None:
+            try:
+                for _box in _boxes:
+                    if int(_box.cls) == 0 and float(_box.conf) > 0.4:
+                        person_in_frame = True
+                        break
+            except Exception:
+                person_in_frame = False
 
         annotated_frame = frame.copy()
         # Virtual fence zones are drawn first so detections sit on top of them.
@@ -704,8 +904,10 @@ def video_processing_thread():
         # ------------------------------------------------------
         vehicle_dets = []
         if ENABLE_VEHICLE_DETECTION:
+            _t = time.perf_counter()
             vehicle_dets = vehicle_detector.process_boxes(
                 getattr(yolo_results, "boxes", None), frame)
+            stage_ms['vehicle'] += (time.perf_counter() - _t) * 1000
             vehicle_detector.draw(annotated_frame, vehicle_dets)
             system_stats['vehicles_detected'] = vehicle_detector.total_unique
             system_stats['vehicles_in_frame'] = len(vehicle_dets)
@@ -730,6 +932,7 @@ def video_processing_thread():
         # ------------------------------------------------------
         # ANPR — number-plate read: every new vehicle track is attempted once.
         # ------------------------------------------------------
+        _t = time.perf_counter()
         if ENABLE_ANPR and vehicle_dets:
             tried_new = 0
             for v in vehicle_dets:
@@ -757,14 +960,27 @@ def video_processing_thread():
                                     'vehicle': v['class_name'],
                                     'track_id': record['track_id']})
         system_stats['plates_read'] = anpr_reader.total_unique
+        stage_ms['anpr'] += (time.perf_counter() - _t) * 1000
 
         # ------------------------------------------------------
-        # Faces — Haar cascade on the data bundled with OpenCV (throttled).
+        # Faces — Haar cascade on the data bundled with OpenCV.
+        # Issue 2: only when faces could actually exist (a person is in frame) and
+        # only on the throttled schedule; with nobody present this now costs
+        # nothing instead of a full-frame cascade scan every few frames.
         # ------------------------------------------------------
-        if ENABLE_FACE_DETECTION and frame_count % FACE_DETECT_EVERY_N_FRAMES == 0:
+        _t = time.perf_counter()
+        if (ENABLE_FACE_DETECTION and person_in_frame
+                and frame_count % FACE_DETECT_EVERY_N_FRAMES == 0):
             face_detector.detect(frame, gray=cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
             system_stats['faces_in_frame'] = face_detector.last_count
-        face_detector.annotate(annotated_frame, face_detector.last_faces)
+        if ENABLE_FACE_DETECTION and person_in_frame:
+            face_detector.annotate(annotated_frame, face_detector.last_faces)
+        elif ENABLE_FACE_DETECTION:
+            # Nobody in frame: there are no faces to find, so drop the stale boxes.
+            face_detector.last_faces = []
+            face_detector.last_count = 0
+            system_stats['faces_in_frame'] = 0
+        stage_ms['face'] += (time.perf_counter() - _t) * 1000
 
         # Draw + proximity-check hazardous objects
         for obj in hazardous_detections:
@@ -888,6 +1104,7 @@ def video_processing_thread():
                 pose_metrics = None
                 adjusted_landmarks = None
                 confidence = 1.0
+                _t = time.perf_counter()
 
                 if person_roi is not None and person_roi.size > 0:
                     # FIX: MediaPipe cost scales with input size, and cost multiplies by
@@ -964,6 +1181,11 @@ def video_processing_thread():
                         track_pose_hist.append((adjusted_landmarks, current_time))
                         recent_behaviors_log.append({'track_id': track_id, 'behavior': label, 'time': current_time})
 
+                # Issue 2: pose cost is per person per frame, so this is the stage
+                # to watch in the log when several people are in frame. The ROI cap
+                # (POSE_ROI_MAX_DIM) is what keeps it from scaling with person size.
+                stage_ms['pose'] += (time.perf_counter() - _t) * 1000
+
                 # Stable behavior over sliding window (single source of truth, per track)
                 stable_behavior = 'normal'
                 track_behavior_buf = behavior_buffer_by_track[track_id]
@@ -983,7 +1205,7 @@ def video_processing_thread():
                 # behaviour changes (metadata only — never raw frames), backing the
                 # README's "pose sequences" storage claim.
                 if poses_in_frame and pose_behavior_persisted.get(track_id) != stable_behavior:
-                    pose_behavior_persisted[track_id] = stable_behavior
+                    pose_behavior_persisted[track_id] = stable_behavior  # behaviour changed
                     try:
                         event_store.append_pose_sequence(track_id, {
                             'behavior': stable_behavior,
@@ -1097,6 +1319,15 @@ def video_processing_thread():
             ret, jpeg = cv2.imencode('.jpg', annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
             if ret:
                 latest_frame = jpeg.tobytes()
+
+        # Issue 2: close out this frame's timing window and log the breakdown
+        # (see _log_stage_timing) so the real bottleneck is measured, not guessed.
+        stage_ms['frame_total'] += (time.perf_counter() - frame_start) * 1000
+        stage_frames += 1
+        if stage_frames >= STAGE_REPORT_EVERY_N_FRAMES:
+            _log_stage_timing(stage_ms, stage_frames, persons_in_frame, poses_in_frame)
+            stage_ms.clear()
+            stage_frames = 0
 
     grabber.release()
 

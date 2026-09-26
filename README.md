@@ -38,6 +38,9 @@ All combined into a **live monitoring dashboard** for intelligent surveillance.
 - 🌙 Night-time movement detection (low-light enhancement + frame-difference motion)
 - 🔗 Command & Control (C2) integration (standard event schema over webhook, optional MQTT)
 - 💾 Persistent storage of alerts, events and reports (JSONL / JSON under `data/`)
+- 🔄 Automatic camera reconnection: a phone/IP/RTSP feed that drops is reopened with backoff instead of dying for the session, and each camera's state (`connecting` / `live` / `reconnecting` / `error: …`) plus its real captured resolution is shown on its dashboard tab
+- 📱 Responsive dashboard: the live feed fills the available width/height (`object-fit: contain`, so a portrait phone stream and a landscape webcam both fit) and the stats/alerts/behaviour panels stack underneath it on tablets and phones
+- ⏱️ Per-stage timing log (person tracking, object detection, vehicle, ANPR, face, pose, night vision + CUDA memory every 30 frames), so lag is diagnosed from measurements instead of guesses
 - 📁 Data storage:
   - Pose sequences
   - Alerts
@@ -297,7 +300,7 @@ Cameras are configured in **`cameras.py`** — edit the `CAMERAS` list, save, an
 ```python
 # cameras.py
 CAMERAS = [
-    {"id": "Cam_1", "source": 0, "width": 640, "height": 480},    # laptop webcam = AI analytics
+    {"id": "Cam_1", "source": 0, "width": 1280, "height": 720},   # laptop webcam = AI analytics
     {"id": "phone", "source": "http://192.168.1.50:8080/video"},  # extra live feed
 ]
 ```
@@ -305,6 +308,7 @@ CAMERAS = [
 - The **first** entry is the analytics camera: it runs the full AI pipeline (YOLO tracking, pose, ANPR, vehicle/face detection, zones, night vision) and is the feed served at `/video_feed`.
 - Every further entry appears as an extra tab on the same dashboard — click a tab to switch the feed. `GET /api/cameras` lists them all with their status.
 - `source` accepts a device index (`0`, `1`, …), an IP-Webcam/RTSP URL, or a video-file path; `width`/`height` are optional per camera.
+- **Every camera reconnects on its own.** If a feed drops (phone screen off, Wi-Fi hiccup, RTSP timeout), the grabber releases the capture and reopens it with backoff — 1s, doubling to a 10s ceiling — retrying indefinitely rather than giving up. URL sources are also retried with the FFMPEG backend, and opening a URL has an 8s connect timeout so an unreachable IP cannot hang startup. `GET /api/cameras` reports `status` (`connecting` / `live` / `reconnecting` / `error: <reason>`) and the actual captured `resolution` per camera; the dashboard shows both on the camera tabs and in the status chip above the feed.
 - **Detection runs on the primary camera only.** Each detection pipeline loads its own YOLO/MediaPipe models and is CPU-bound, so running the full stack on every camera multiplies the load (and the lag). To switch which camera is analysed, move it to the top of the list.
 - Adding a camera is just another entry in `CAMERAS`, then restart `python app.py`.
 
@@ -429,7 +433,7 @@ All optional — sensible defaults apply when unset. Cameras themselves are conf
 | `CAMERA_ID` | `Cam_1` | Identifier included in alerts / C2 events |
 | `CAMERA_INDEX` | `0` | Camera device index, **or** a video-file path / RTSP-URL string |
 | `CAMERA_SOURCES` | — | Fallback camera list (`id=source`, comma-separated); used only when `cameras.py` defines no cameras |
-| `CAMERA_WIDTH` / `CAMERA_HEIGHT` | `640` / `480` | Capture resolution (raise for wide-area/field cameras) |
+| `CAMERA_WIDTH` / `CAMERA_HEIGHT` | `1280` / `720` | Default capture resolution — the feed is displayed full-width, so 720p is the default; overridden per camera by `width`/`height` in cameras.py. Drop it back to `640`/`480` if the timing log shows capture-side stages costing too much |
 | `WEAPON_MODEL_PATH` | auto-detected | Path to a custom weapon `best.pt`; otherwise COCO is used |
 | `HAZARDOUS_LABELS` | auto | Comma-separated classes to flag as hazardous, e.g. `knife,handgun` (overrides auto-detect) |
 | `HAZARDOUS_CONF_THRESHOLD` | `0.4` | Confidence needed to flag a hazardous object |
@@ -490,6 +494,21 @@ the dashboard's endpoints and element ids.
 ---
 
 ## 🛠️ Troubleshooting
+
+### Lag / low FPS — read the per-stage timing log before changing anything
+
+Every 30 frames `app.py` prints a measured breakdown of where the frame budget
+actually went, e.g.
+
+```
+[Timing] avg/frame over 30 frames: total=142ms (throughput ~7.0 fps) | people=2 poses=2 | night_vision=6.1ms person_tracking=38.4ms object_detection=21.9ms vehicle=0.4ms anpr=0.0ms face=9.8ms pose=52.3ms | other=13.1ms
+[GPU] torch.cuda allocated=412MB reserved=768MB (non-zero / growing means this run really is inferring on CUDA)
+```
+
+- `total` is the whole frame (a larger `total` than the sum of the stages is the loop's own drawing/JPEG-encode time, reported as `other`).
+- `person_tracking` and `object_detection` are the two YOLO passes; if the `[GPU]` line stays at 0 MB they are running on CPU (see step 4 — the CPU torch wheel is the usual cause).
+- `pose` is MediaPipe, which is CPU-only by design and scales with the number of people in frame; it is capped by `POSE_ROI_MAX_DIM`. `face` is the OpenCV Haar cascade and `anpr` is OCR — both are gated on a person/vehicle actually being in frame and throttled by `FACE_DETECT_EVERY_N_FRAMES` / `ANPR_MAX_NEW_PER_FRAME`.
+- Only change a throttle after the log says that stage dominates: measure, adjust one knob, measure again.
 
 ### `AttributeError: module 'cv2' has no attribute 'setNumThreads'`
 
