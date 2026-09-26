@@ -32,7 +32,6 @@ class FaceDetector:
         self.cascade_alt = self._load(CASCADE_FILE_ALT)
         self.available = self.cascade is not None
 
-        self.total_unique = 0
         self.last_count = 0
         self.last_faces = []
 

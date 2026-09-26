@@ -489,6 +489,28 @@
         .weapons-list::-webkit-scrollbar-thumb:hover {
             background: rgba(255, 255, 255, 0.5);
         }
+        .camera-tabs {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin: 0.75rem 0 0.25rem;
+        }
+        .camera-tab {
+            padding: 0.35rem 0.8rem;
+            border-radius: 999px;
+            border: 1px solid rgba(120, 200, 255, 0.35);
+            background: rgba(20, 30, 48, 0.6);
+            color: #cfe8ff;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s;
+        }
+        .camera-tab:hover { border-color: rgba(120, 200, 255, 0.7); }
+        .camera-tab.active {
+            background: rgba(60, 140, 220, 0.35);
+            border-color: rgba(120, 200, 255, 0.9);
+            color: #ffffff;
+        }
     </style>
 </head>
 <body>
@@ -514,6 +536,8 @@
                 Live AI Analysis Feed
             </h2>
             <img id="video-feed" src="/video_feed" alt="Video Feed Loading...">
+
+            <div class="camera-tabs" id="camera-tabs"></div>
 
             <div class="status-chips">
                 <span class="chip" id="chip-night">☀️ Checking light level…</span>
@@ -1119,11 +1143,32 @@
                 updateBehaviorAnalysis();
                 updateDetections();
                 updateC2();
+                loadCameras();
             }
         }, 2000);
         
+        function loadCameras() {
+            fetch('/api/cameras')
+                .then(response => response.json())
+                .then(data => {
+                    const tabs = document.getElementById('camera-tabs');
+                    if (!tabs || !data.cameras || data.cameras.length < 2) return;
+                    tabs.innerHTML = data.cameras.map(c =>
+                        `<button class="camera-tab${c.detect ? ' active' : ''}" ` +
+                        `onclick="selectCamera('${c.camera_id}')">` +
+                        `${c.camera_id}${c.detect ? ' • AI' : ''}</button>`
+                    ).join('');
+                })
+                .catch(() => {});
+        }
+
+        function selectCamera(cameraId) {
+            document.getElementById('video-feed').src = '/video_feed/' + encodeURIComponent(cameraId);
+        }
+
         // Initial load
         updateStats();
+        loadCameras();
         updateAlerts();
         updateWeapons();
         updateBehaviorAnalysis();

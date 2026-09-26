@@ -1,23 +1,34 @@
+# =============================================================================
+# EnhancedSmartSurveillance — full runtime requirements (Python 3.10).
+#
+# One-shot install:   pip install -r requirements.txt
+#
+# These defaults are self-contained: they include the CPU build of PyTorch, so
+# the app runs on any machine with no extra steps. For NVIDIA GPU acceleration,
+# replace the three torch lines with the CUDA wheels (see README step 4).
+# =============================================================================
+
 # Backend
 flask==2.3.3
 
+# -----------------------------------------------------------------------------
 # Computer Vision
-# Use opencv-contrib-python (a superset of opencv-python). mediapipe depends on
-# opencv-contrib-python, and installing BOTH distributions leaves two packages
-# owning the same `cv2` folder, which breaks imports with the error
-# "module 'cv2' has no attribute 'setNumThreads'". Only ever install ONE of
-# opencv-python / opencv-contrib-python in an environment.
+#
+# IMPORTANT: only ONE OpenCV distribution may be installed. mediapipe depends on
+# opencv-contrib-python, and easyocr (optional, below) depends on
+# opencv-python-headless. Installing more than one leaves them fighting over the
+# same `cv2` folder, which breaks imports with:
+#     AttributeError: module 'cv2' has no attribute 'setNumThreads'
+# opencv-contrib-python is a superset of opencv-python, so it covers everything.
+# -----------------------------------------------------------------------------
 opencv-contrib-python==4.8.1.78
 Pillow==10.0.1
 
-# Deep Learning - YOLOv8 (Ultralytics) + PyTorch
+# Deep Learning - YOLOv8 (Ultralytics) + PyTorch (CPU build by default)
 ultralytics==8.0.196
-# torch / torchvision / torchaudio are intentionally NOT installed via this file —
-# the correct wheel depends on your hardware (NVIDIA GPU + CUDA version, or
-# CPU-only). See README.md step 4 for the exact install command for your machine.
-# torch==2.5.1
-# torchvision==0.20.1
-# torchaudio==2.5.1
+torch==2.5.1
+torchvision==0.20.1
+torchaudio==2.5.1
 
 # Pose Estimation
 mediapipe==0.10.7
@@ -32,25 +43,25 @@ python-dateutil==2.8.2
 matplotlib==3.7.2
 seaborn==0.12.2
 
-# tensorflow  # or a TF version compatible with your environment; install only if you will train/load Keras models
-
-# (optional) for advanced tracking later:
+# Advanced tracking helpers
 filterpy==1.4.5
 scikit-image==0.20.0
 
-# ---------------------------------------------------------------------------
-# OPTIONAL extras for the added capabilities. The default install above already
-# covers vehicle detection/classification, face detection, virtual fencing and
-# night-time detection (they use OpenCV + the existing models only).
-# ---------------------------------------------------------------------------
+# Optional MQTT transport for the C2 integration (the HTTP webhook needs nothing).
+paho-mqtt==2.1.0
 
-# ANPR (number-plate recognition) needs ONE OCR backend. easyocr reuses the
-# torch install from step 4 and needs no extra system binary — recommended.
-# easyocr==1.7.1   -- install it as:  pip install easyocr "numpy<2"
-#   easyocr's metadata otherwise upgrades NumPy to 2.x, which is binary-incompatible
-#   with the NumPy 1.x builds of ultralytics / matplotlib / opencv already installed.
-# (alternative: lighter Python side, but requires the Tesseract OCR binary on PATH)
-# pytesseract==0.3.13
-
-# MQTT transport for the Command & Control integration (webhook needs nothing).
-# paho-mqtt==2.1.0
+# -----------------------------------------------------------------------------
+# OPTIONAL extras — NOT installed by default.
+#
+# ANPR (number-plate OCR) needs ONE OCR backend. easyocr reuses the torch
+# install and needs no system binary (recommended). It pulls in
+# opencv-python-headless, which clashes with opencv-contrib-python, so install
+# it and then restore the single OpenCV build:
+#
+#     pip install easyocr "numpy<2"
+#     pip uninstall -y opencv-python-headless opencv-contrib-python
+#     pip install "opencv-contrib-python==4.8.1.78"
+#
+# Lighter alternative (needs the Tesseract binary on PATH):
+#     pip install pytesseract==0.3.13
+# -----------------------------------------------------------------------------

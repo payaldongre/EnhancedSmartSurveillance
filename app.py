@@ -82,7 +82,8 @@ FACE_PRIVACY_BLUR = _env_flag("FACE_PRIVACY_BLUR", False)
 ALERT_ON_NEW_VEHICLE = _env_flag("ALERT_ON_NEW_VEHICLE", False)
 
 FACE_DETECT_EVERY_N_FRAMES = int(os.environ.get("FACE_DETECT_EVERY_N_FRAMES", "5"))
-ANPR_EVERY_N_FRAMES = int(os.environ.get("ANPR_EVERY_N_FRAMES", "15"))
+ANPR_EVERY_N_FRAMES = int(os.environ.get("ANPR_EVERY_N_FRAMES", "15"))  # used for id-less vehicles
+ANPR_MAX_NEW_PER_FRAME = int(os.environ.get("ANPR_MAX_NEW_PER_FRAME", "2"))
 CAMERA_ID = os.environ.get("CAMERA_ID", "Cam_1")
 # Camera source: a device index ("0", "1", ...) or a video-file path / RTSP-URL
 # string. Resolution is applied on a best-effort basis (the driver may pick the
@@ -91,11 +92,51 @@ CAMERA_INDEX = os.environ.get("CAMERA_INDEX", "0")
 CAMERA_WIDTH = int(os.environ.get("CAMERA_WIDTH", "640"))
 CAMERA_HEIGHT = int(os.environ.get("CAMERA_HEIGHT", "480"))
 
+# Multi-camera: CAMERA_SOURCES is a comma-separated list of `id=source` (or bare
+# `source`) entries. The FIRST entry is the analytics camera and runs the full
+# AI pipeline; every further entry is an additional live feed shown on the same
+# dashboard. Entries look like "0,phone=http://192.168.1.50:8080/video".
+# When CAMERA_SOURCES is unset, the legacy CAMERA_ID / CAMERA_INDEX pair is used.
+CAMERA_SOURCES = os.environ.get("CAMERA_SOURCES", "").strip()
+
+
+def _parse_extra_cameras():
+    """Return (primary_entry_or_None, [(id, source), ...] for the extras)."""
+    if not CAMERA_SOURCES:
+        return None, []
+    entries = []
+    for entry in CAMERA_SOURCES.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        if "=" in entry:
+            cid, src = entry.split("=", 1)
+            cid, src = cid.strip(), src.strip()
+        else:
+            cid, src = "", entry
+        entries.append((cid or f"Cam_{len(entries) + 1}", src))
+    if not entries:
+        return None, []
+    return entries[0], entries[1:]
+
+
+_PRIMARY_ENTRY, _EXTRA_CAMERAS = _parse_extra_cameras()
+if _PRIMARY_ENTRY:
+    # The first CAMERA_SOURCES entry overrides the legacy single-camera pair.
+    CAMERA_ID, CAMERA_INDEX = _PRIMARY_ENTRY[0], _PRIMARY_ENTRY[1]
+
 # FIX: detect device BEFORE creating either model, so both can be told
 # explicitly which device to use rather than relying on Ultralytics' auto-detect.
 device_in_use = "GPU (CUDA)" if torch.cuda.is_available() else "CPU"
 INFERENCE_DEVICE = 0 if torch.cuda.is_available() else "cpu"
-print(f"Inference device: {device_in_use}")
+print(f"Inference device: {device_in_use} | torch {torch.__version__}"
+      + (f" | CUDA {torch.version.cuda} | {torch.cuda.get_device_name(0)}"
+         if torch.cuda.is_available() else ""))
+if not torch.cuda.is_available():
+    if "+cu" in torch.__version__:
+        print("  torch is a CUDA build but no GPU is visible — check the NVIDIA driver (`nvidia-smi`).")
+    else:
+        print("  torch is a CPU-only build. For GPU acceleration, reinstall torch from the CUDA index (README step 4).")
 print("Note: MediaPipe Pose always runs on CPU regardless of this setting — the "
       "Windows pip build has no GPU delegate. Only the two YOLO calls get the GPU boost.")
 
@@ -109,6 +150,11 @@ else:
 
 object_detector = ObjectDetector(WEAPON_MODEL_PATH or "yolov8n.pt",
                                  imgsz=320, device=INFERENCE_DEVICE)
+_od_stats = object_detector.stats()
+if _od_stats["custom_weapon_model"]:
+    print(f"Custom weapon model classes: {_od_stats['model_classes']}")
+    print(f"Flagging as hazardous: {_od_stats['hazardous_classes']} "
+          "(override with HAZARDOUS_LABELS=knife,gun)")
 
 # ------------------------------------------------------
 # Added capability modules (each documented in its own file)
@@ -125,6 +171,27 @@ print(f"ANPR backend: {anpr_reader.backend} | Faces: "
       f"{'on' if face_detector.available else 'unavailable'} | "
       f"Zones: {len(virtual_fence.list_zones())} | "
       f"C2: {'on' if c2_client.enabled else 'off'}")
+if ENABLE_VIRTUAL_FENCE and not virtual_fence.list_zones():
+    print("[VirtualFence] WARNING: no zones loaded — the virtual fence will not fire. "
+          "Add one via zones.json or POST /api/zones.")
+_STREAM_CAMERAS = [StreamCamera(cid, src, CAMERA_WIDTH, CAMERA_HEIGHT)
+                   for cid, src in _EXTRA_CAMERAS]
+_STREAM_BY_ID = {cam.id: cam for cam in _STREAM_CAMERAS}
+
+
+def _camera_listing():
+    """Uniform list of every configured camera for the dashboard/API."""
+    cams = [{
+        'camera_id': CAMERA_ID,
+        'source': CAMERA_INDEX,
+        'detect': True,
+        'running': latest_frame is not None,
+        'fps': round(system_stats.get('fps', 0), 1),
+    }]
+    cams += [cam.public_stats() for cam in _STREAM_CAMERAS]
+    return cams
+
+
 app = Flask(__name__)
 
 # ------------------------------------------------------
@@ -171,6 +238,8 @@ print("AI models loaded successfully!")
 
 last_alert_time = 0
 last_plate_by_track = {}   # track_id -> last plate read (avoids re-alerting the same plate)
+anpr_attempted_tracks = set()  # vehicle track_ids already OCR'd; ANPR tries each once
+pose_behavior_persisted = {}   # track_id -> last behaviour written to the pose-sequence store
 alert_cooldown = 3
 active_weapon_alerts = {}   # (track_id, weapon_label) -> last_seen_time — see FIX note below
 WEAPON_ALERT_TIMEOUT = 6.0  # seconds a weapon can go undetected near this person before
@@ -479,6 +548,72 @@ class FrameGrabber:
         self.cap.release()
 
 
+class StreamCamera:
+    """A lightweight live feed for an ADDITIONAL camera.
+
+    Extra cameras stream to the dashboard but deliberately skip the AI models:
+    each detection pipeline loads its own YOLO/MediaPipe instances and is
+    CPU-bound, so running the full stack per camera would multiply the load (and
+    the lag). Detection runs on the analytics camera — the first CAMERA_SOURCES
+    entry, or CAMERA_INDEX when CAMERA_SOURCES is unset. Promote a different
+    camera by putting it first.
+    """
+
+    def __init__(self, camera_id, source, width=640, height=480):
+        self.id = camera_id
+        self.source = str(source)
+        self.detect = False
+        self.latest_frame = None
+        self._lock = threading.Lock()
+        self.grabber = FrameGrabber(source, width, height)
+        self.running = self.grabber.running
+        self._last_frame_id = -1
+        self.fps = 0.0
+        self.thread = None
+
+    def start(self):
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        if not self.grabber.running:
+            print(f"[Camera {self.id}] ERROR: could not open source {self.source!r}. "
+                  "Check the index/URL (a phone must be on the same Wi-Fi and an "
+                  "IP-Webcam URL usually ends in /video).")
+            return
+        print(f"[Camera {self.id}] opened {self.source!r} "
+              f"(live view — AI detection runs on {CAMERA_ID})")
+        count = 0
+        start_time = time.time()
+        while True:
+            frame, frame_id = self.grabber.get_latest()
+            if frame is None or frame_id == self._last_frame_id:
+                time.sleep(0.005)
+                continue
+            self._last_frame_id = frame_id
+            frame = cv2.flip(frame, 1)
+            cv2.putText(frame, f"Cam: {self.id} (live view)", (10, 25),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            with self._lock:
+                ret, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                if ret:
+                    self.latest_frame = jpeg.tobytes()
+            count += 1
+            if count % 10 == 0:
+                now = time.time()
+                self.fps = 10.0 / max(1e-6, now - start_time)
+                start_time = now
+
+    def public_stats(self):
+        return {
+            'camera_id': self.id,
+            'source': self.source,
+            'detect': False,
+            'running': self.running and self.latest_frame is not None,
+            'fps': round(self.fps, 1),
+        }
+
+
 def video_processing_thread():
     global latest_frame, last_alert_time, system_stats, loitering_tracker
     global last_hazardous_detections
@@ -567,10 +702,23 @@ def video_processing_thread():
                         data={'class': v['class_name'], 'color': v['color']})
 
         # ------------------------------------------------------
-        # ANPR — number-plate read on vehicles (throttled, cached per track).
+        # ANPR — number-plate read: every new vehicle track is attempted once.
         # ------------------------------------------------------
-        if ENABLE_ANPR and vehicle_dets and frame_count % ANPR_EVERY_N_FRAMES == 0:
-            for v in vehicle_dets[:3]:
+        if ENABLE_ANPR and vehicle_dets:
+            tried_new = 0
+            for v in vehicle_dets:
+                tid = v['track_id']
+                if tid >= 0:
+                    # ByteTrack ids are stable: attempt each vehicle exactly once,
+                    # so a quick drive-by is not missed by periodic sampling.
+                    if tid in anpr_attempted_tracks:
+                        continue
+                    anpr_attempted_tracks.add(tid)
+                elif frame_count % ANPR_EVERY_N_FRAMES != 0:
+                    continue  # no stable id — fall back to periodic sampling
+                if tried_new >= ANPR_MAX_NEW_PER_FRAME:
+                    break
+                tried_new += 1
                 record = anpr_reader.read_plate(frame, v['bbox'], v['track_id'])
                 if not record:
                     continue
@@ -644,6 +792,7 @@ def video_processing_thread():
             if now_ts - last_pos_time > STALE_TRACK_SECONDS:
                 loitering_tracker.pop(tid, None)
                 pose_history_by_track.pop(tid, None)
+                pose_behavior_persisted.pop(tid, None)
                 behavior_buffer_by_track.pop(tid, None)
 
         # Prune weapon-alert keys that haven't been refreshed recently — lets a
@@ -804,6 +953,20 @@ def video_processing_thread():
                     elif abnormal_count >= max(6, int(0.5 * track_behavior_buf.maxlen)):
                         stable_behavior = 'abnormal'
 
+                # Persist a compact pose-sequence record when this track's confirmed
+                # behaviour changes (metadata only — never raw frames), backing the
+                # README's "pose sequences" storage claim.
+                if poses_in_frame and pose_behavior_persisted.get(track_id) != stable_behavior:
+                    pose_behavior_persisted[track_id] = stable_behavior
+                    try:
+                        event_store.append_pose_sequence(track_id, {
+                            'behavior': stable_behavior,
+                            'confidence': round(confidence, 3),
+                            'samples': len(pose_history_by_track[track_id]),
+                        })
+                    except Exception:
+                        pass
+
                 lt = loitering_tracker[track_id]
                 if stable_behavior == 'running':
                     lt['running_state'] = True
@@ -912,6 +1075,16 @@ def video_processing_thread():
     grabber.release()
 
 
+def generate_frames_from(cam):
+    while True:
+        with cam._lock:
+            frame = cam.latest_frame
+        if frame is not None:
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+        time.sleep(0.033)
+
+
 def generate_frames():
     global latest_frame, lock
     while True:
@@ -932,6 +1105,23 @@ def video_feed():
     return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
+@app.route('/video_feed/<camera_id>')
+def video_feed_camera(camera_id):
+    if camera_id == CAMERA_ID:
+        return Response(generate_frames(),
+                        mimetype='multipart/x-mixed-replace; boundary=frame')
+    cam = _STREAM_BY_ID.get(camera_id)
+    if cam is None:
+        return jsonify({'status': 'error', 'message': f'unknown camera {camera_id}'}), 404
+    return Response(generate_frames_from(cam),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
+
+
+@app.route('/api/cameras')
+def get_cameras():
+    return jsonify({'cameras': _camera_listing()})
+
+
 @app.route('/api/alerts')
 def get_alerts():
     return jsonify({'alerts': alerts_list[:10], 'total_alerts': len(alerts_list)})
@@ -939,7 +1129,10 @@ def get_alerts():
 
 @app.route('/api/stats')
 def get_stats():
-    return jsonify(system_stats)
+    payload = dict(system_stats)
+    payload['camera_id'] = CAMERA_ID
+    payload['cameras'] = _camera_listing()
+    return jsonify(payload)
 
 
 @app.route('/api/test_alert')
@@ -969,6 +1162,7 @@ def clear_alerts():
     global alerts_list, system_stats
     alerts_list = []
     last_plate_by_track.clear()
+    anpr_attempted_tracks.clear()
     vehicle_detector.reset_stats()
     anpr_reader.reset_stats()
     virtual_fence.reset_stats()
@@ -1084,6 +1278,10 @@ if __name__ == '__main__':
 
     video_thread = threading.Thread(target=video_processing_thread, daemon=True)
     video_thread.start()
+
+    # Additional cameras stream live into the same dashboard (no AI pipeline).
+    for _stream_cam in _STREAM_CAMERAS:
+        _stream_cam.start()
 
     print("Open your browser and go to: http://localhost:5000")
     app.run(host='0.0.0.0', debug=False, port=5000, use_reloader=False)

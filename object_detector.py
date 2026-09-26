@@ -73,11 +73,23 @@ class ObjectDetector:
         self.is_custom = not _is_stock_model(model_path)
         self.class_names = list(self.model.names.values()) if hasattr(self.model, "names") else []
 
+        env_labels = os.environ.get("HAZARDOUS_LABELS", "").strip()
         if hazardous_labels is not None:
             self.hazardous_labels = [l.lower() for l in hazardous_labels]
+        elif env_labels:
+            # Explicit override, e.g. HAZARDOUS_LABELS=knife,handgun. Use this to
+            # pin the exact hazardous classes when a custom model has extra
+            # non-weapon classes (some public datasets bundle "person" for context).
+            self.hazardous_labels = [l.strip().lower() for l in env_labels.split(",") if l.strip()]
         elif self.is_custom:
-            # A weapon-specific checkpoint: every class is a hazard.
-            self.hazardous_labels = [n.lower() for n in self.class_names]
+            # A weapon-specific checkpoint: normally every class is a hazard, but a
+            # dataset often bundles a class that is not itself a weapon. Keep only
+            # classes whose names look weapon-like so those can never be mis-flagged,
+            # and fall back to treating every class as a hazard if none match (the
+            # model exists only to find weapons).
+            matched = [n.lower() for n in self.class_names
+                       if any(k in n.lower() for k in WEAPON_KEYWORDS)]
+            self.hazardous_labels = matched or [n.lower() for n in self.class_names]
         else:
             self.hazardous_labels = list(COCO_HAZARDOUS)
 
@@ -127,4 +139,5 @@ class ObjectDetector:
             "model": os.path.basename(self.model_path),
             "custom_weapon_model": self.is_custom,
             "hazardous_classes": self.hazardous_labels,
+            "model_classes": self.class_names,
         }

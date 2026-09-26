@@ -194,11 +194,13 @@ Either way, you should see `(env)` at the start of your terminal prompt once it'
 pip install -r requirements.txt
 ```
 
-`requirements.txt` intentionally does **not** pin `torch` / `torchvision` / `torchaudio` — install those separately in the next step, since the correct build depends on your hardware.
+This is the **only** install step: `requirements.txt` is self-contained and now pins the **CPU build** of PyTorch too, so the app runs as-is on any machine. If you have an NVIDIA GPU, step 4 swaps those three wheels for the CUDA build to remove the CPU lag.
+
+> ⚡ **Fast path (Windows):** run `setup.bat` once instead of steps 2–4 — it creates the `./env` conda environment and installs everything. After that, starting the app is just the three commands under **Run the Project**.
 
 ### 4️⃣ Install PyTorch (CPU or GPU)
 
-PyTorch is only needed to speed up YOLO inference if your machine has an NVIDIA GPU — it's not tied to Anaconda in any way and installs identically inside a `venv` or a conda env.
+Step 3 already installed the CPU build of PyTorch, which works everywhere but is the main cause of the on-screen lag. If your machine has an NVIDIA GPU, replace it with the matching CUDA build to move YOLO inference (and ANPR's easyocr) onto the GPU.
 
 Check whether you have an NVIDIA GPU and what CUDA version your driver supports:
 
@@ -225,24 +227,21 @@ python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_
 pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --extra-index-url https://download.pytorch.org/whl/cpu
 ```
 
-`app.py` prints `Inference device: GPU (CUDA)` or `Inference device: CPU` on startup, so you can confirm which one is actually active. Note that MediaPipe Pose always runs on CPU regardless of this setting — only the two YOLO passes (person tracking + object detection) benefit from GPU.
+On startup `app.py` prints the active device **and** the torch build, e.g. `Inference device: CPU | torch 2.5.1+cpu`, and warns you when torch is a CPU-only build. If the video lags, check that line first — an NVIDIA GPU still running the CPU wheel is the usual cause. MediaPipe Pose always runs on CPU regardless; only the two YOLO passes (person tracking + object detection) and ANPR OCR benefit from the GPU.
 
 ---
 
 ## ▶️ Run the Project
 
-```bash
-# Navigate to the project folder (adjust the path to wherever you cloned it)
-cd EnhancedSmartSurveillance
+Once the one-time setup is done, starting the app is three commands (Windows example — adjust the path to where you cloned it):
 
-# Activate your environment
-# venv — Windows:      env\Scripts\activate
-# venv — macOS/Linux:  source env/bin/activate
-# conda:                conda activate ./env
-
-# Run the application
+```bat
+cd /d "D:\EnhancedSmartSurveillance"
+conda activate D:\EnhancedSmartSurveillance\env
 python app.py
 ```
+
+With a plain `venv` instead of conda, the middle line is `env\Scripts\activate` (Windows) or `source env/bin/activate` (macOS/Linux). Then open <http://localhost:5000>.
 
 ---
 
@@ -267,12 +266,54 @@ http://192.168.1.5:5000
 
 ---
 
+## 📱 Using your phone (or a file) as the camera
+
+`CAMERA_INDEX` accepts a device number **or a stream URL / file path**, so you can use an Android/iPhone as a wireless or wired camera instead of a webcam:
+
+1. Install a free IP-camera app on the phone (e.g. **IP Webcam** on Android) and start its server — it shows a URL such as `http://192.168.1.50:8080`.
+2. Phone and PC must be on the same Wi-Fi network.
+3. Point the app at the phone's video feed:
+
+```bat
+set CAMERA_INDEX=http://192.168.1.50:8080/video
+python app.py
+```
+
+In PowerShell use `$env:CAMERA_INDEX="http://192.168.1.50:8080/video"` instead. Over USB, enable the app's USB/ADB mode and use its localhost URL.
+
+RTSP cameras (`rtsp://user:pass@host:554/stream`) and recorded files (`set CAMERA_INDEX=C:\clips\demo.mp4`) work the same way — the file option is also the easiest way to test the whole pipeline without any camera at all.
+
+> To use the phone **alongside** the laptop webcam, add it as an extra camera — see [Multiple cameras](#-multiple-cameras) below.
+
+---
+
+## 🎥 Multiple cameras
+
+Set `CAMERA_SOURCES` to a comma-separated list of cameras. The **first** entry is the analytics camera and runs the full AI pipeline; every other entry is an additional live feed shown on the same dashboard (a camera-tab strip appears above the video).
+
+```bat
+REM laptop webcam (index 0) = AI analytics; phone = extra live feed
+set CAMERA_SOURCES=0,phone=http://192.168.1.50:8080/video
+python app.py
+```
+
+- Entries are `id=source` or a bare `source` (auto-named `Cam_1`, `Cam_2`, …). Any mix works: device index, IP-Webcam/RTSP URL, or a video file.
+- The dashboard shows a tab per camera; click one to switch the feed. `GET /api/cameras` lists them all with their status.
+- **Detection runs on the first camera only.** Each detection pipeline loads its own YOLO/MediaPipe models and is CPU-bound, so running the full stack on every camera multiplies the load (and the lag). To run detection on the phone instead, put it first: `set CAMERA_SOURCES=phone=http://192.168.1.50:8080/video,0`.
+- Adding more cameras is just more entries: `set CAMERA_SOURCES=0,front=http://192.168.1.51:8080/video,rear=rtsp://user:pass@host:554/stream`.
+
+> Want full AI detection on **every** camera at once? That is a heavier change (per-camera model instances) and roughly doubles CPU per added camera — it can be wired up, ideally on a machine with an NVIDIA GPU.
+
+---
+
 ## 📡 API Endpoints
 
 | Endpoint                 | Description        |
 | ------------------------ | ------------------ |
 | `/`                      | Dashboard          |
-| `/video_feed`            | Live video stream  |
+| `/video_feed`            | Live video stream (analytics camera) |
+| `/video_feed/<camera_id>` | Live video stream for one camera |
+| `/api/cameras`           | Configured cameras + status |
 | `/api/stats`             | System statistics  |
 | `/api/alerts`            | Alert logs         |
 | `/api/weapon_detections` | Weapon alerts      |
@@ -309,7 +350,7 @@ Each person's behavior history is tracked independently, so one person's movemen
 ### 🔪 Hazard Detection
 
 - Out of the box (stock, COCO-pretrained model): detects **knife, scissors, baseball bat, bottle** near a person
-- A **custom-trained weapon model is supported and auto-detected**. Drop your trained YOLOv8 weights at `models/weapons/best.pt` (or set `WEAPON_MODEL_PATH`), and the system uses them instead of the stock model — every class the model was trained on is then treated as hazardous, so a knife+gun model lights up both. Candidate paths checked, in order: `WEAPON_MODEL_PATH`, `models/weapons/best.pt`, `models/best.pt`, `best.pt`, `runs/detect/train/weights/best.pt`. The startup log prints which model is in use, and `/api/detections` reports it too
+- A **custom-trained weapon model is supported and auto-detected**. Drop your trained YOLOv8 weights at `models/weapons/best.pt` (or set `WEAPON_MODEL_PATH`), and the system uses them instead of the stock model. Classes whose names look weapon-like are treated as hazardous, so a knife+gun model lights up both, while a stray non-weapon class bundled in a dataset (e.g. `person`) is ignored. To pin the exact hazardous classes yourself, set `HAZARDOUS_LABELS=knife,handgun` — the startup log prints the model's classes and which ones are flagged. Candidate paths checked, in order: `WEAPON_MODEL_PATH`, `models/weapons/best.pt`, `models/best.pt`, `best.pt`, `runs/detect/train/weights/best.pt`. The startup log prints which model is in use, and `/api/detections` reports it too
 - Fine-tune the model with the included `label_generator.py` annotator and `knife.yaml` dataset config (`dataset/images/{train,val,test}` + `dataset/labels/{train,val,test}`)
 - A detected weapon only triggers a new alert once per occurrence — moving the same object around, or it staying in view, no longer inflates the alert count
 - Confidence can drop under partial occlusion (e.g. an object partly covered by a hand) — a known limitation of general-purpose pretrained models, tunable via `HAZARDOUS_CONF_THRESHOLD`
@@ -338,7 +379,14 @@ Each person's behavior history is tracked independently, so one person's movemen
 
 - Locates the plate inside each vehicle box (bundled plate cascade, then a shape/aspect-ratio fallback)
 - Reads it with a pluggable OCR backend: **easyocr** (recommended, reuses the torch install) or **pytesseract**
-- Install easyocr as `pip install easyocr "numpy<2"` — its metadata otherwise upgrades NumPy to 2.x, which is binary-incompatible with the NumPy 1.x builds of ultralytics / matplotlib / opencv already in the environment
+- Install easyocr as `pip install easyocr "numpy<2"` (its metadata otherwise upgrades NumPy to 2.x, breaking the NumPy 1.x builds of ultralytics / matplotlib / opencv), **then** restore the single OpenCV build it clobbers:
+
+  ```bash
+  pip uninstall -y opencv-python-headless opencv-contrib-python
+  pip install "opencv-contrib-python==4.8.1.78"
+  ```
+
+  easyocr depends on `opencv-python-headless`, which conflicts with `opencv-contrib-python` exactly like the `setNumThreads` error in Troubleshooting
 - De-duplicates per vehicle track, so the same plate only raises a new alert when it actually changes
 - If no OCR backend is installed the rest of the system keeps running and ANPR simply reports itself unavailable
 
@@ -372,13 +420,16 @@ All optional — sensible defaults apply when unset.
 | -------- | ------- | ------- |
 | `CAMERA_ID` | `Cam_1` | Identifier included in alerts / C2 events |
 | `CAMERA_INDEX` | `0` | Camera device index, **or** a video-file path / RTSP-URL string |
+| `CAMERA_SOURCES` | — | Comma-separated `id=source` list; the first runs AI detection, the rest are extra live feeds |
 | `CAMERA_WIDTH` / `CAMERA_HEIGHT` | `640` / `480` | Capture resolution (raise for wide-area/field cameras) |
 | `WEAPON_MODEL_PATH` | auto-detected | Path to a custom weapon `best.pt`; otherwise COCO is used |
+| `HAZARDOUS_LABELS` | auto | Comma-separated classes to flag as hazardous, e.g. `knife,handgun` (overrides auto-detect) |
 | `HAZARDOUS_CONF_THRESHOLD` | `0.4` | Confidence needed to flag a hazardous object |
 | `ENABLE_VEHICLE_DETECTION` | `1` | Toggle vehicle detection/classification |
 | `ENABLE_FACE_DETECTION` | `1` | Toggle face detection |
 | `FACE_PRIVACY_BLUR` | `0` | Pixelate detected faces |
 | `ENABLE_ANPR` | `1` | Toggle number-plate recognition |
+| `ANPR_MAX_NEW_PER_FRAME` | `2` | Max new vehicles OCR'd per frame; each track is tried once |
 | `ENABLE_VIRTUAL_FENCE` | `1` | Toggle zone intrusion detection |
 | `ZONES_CONFIG` | `zones.json` | Zone definition file |
 | `ENABLE_NIGHT_VISION` | `1` | Toggle night-mode enhancement + motion detection |
