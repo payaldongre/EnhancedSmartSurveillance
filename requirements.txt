@@ -2,7 +2,12 @@
 flask==2.3.3
 
 # Computer Vision
-opencv-python==4.8.1.78
+# Use opencv-contrib-python (a superset of opencv-python). mediapipe depends on
+# opencv-contrib-python, and installing BOTH distributions leaves two packages
+# owning the same `cv2` folder, which breaks imports with the error
+# "module 'cv2' has no attribute 'setNumThreads'". Only ever install ONE of
+# opencv-python / opencv-contrib-python in an environment.
+opencv-contrib-python==4.8.1.78
 Pillow==10.0.1
 
 # Deep Learning - YOLOv8 (Ultralytics) + PyTorch

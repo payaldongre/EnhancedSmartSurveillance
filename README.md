@@ -330,7 +330,7 @@ Each person's behavior history is tracked independently, so one person's movemen
 
 ### 🙂 Face Detection
 
-- Uses the Haar cascades bundled inside `opencv-python` — no extra download or dependency, works offline
+- Uses the Haar cascades bundled inside `opencv-contrib-python` — no extra download or dependency, works offline
 - Optional pixelation of detected faces for privacy (`FACE_PRIVACY_BLUR=1`)
 - Only the face **count** is stored or forwarded; no face recognition or identity data is kept
 
@@ -427,6 +427,36 @@ It covers the C2 event schema and real webhook delivery, alert/event/report pers
 the virtual-fence state machine (intrusion → dwell → exit → re-entry) and zone validation,
 stock-vs-custom weapon model class handling, and static consistency of `app.py` routes with
 the dashboard's endpoints and element ids.
+
+---
+
+## 🛠️ Troubleshooting
+
+### `AttributeError: module 'cv2' has no attribute 'setNumThreads'`
+
+This is an OpenCV install conflict, not a bug in this project. `mediapipe`
+depends on **`opencv-contrib-python`**; if **`opencv-python`** is installed as
+well, two distributions end up owning the same `cv2` package and one partially
+overwrites the other. Install exactly one OpenCV distribution — this project
+uses `opencv-contrib-python` (a superset).
+
+In your activated environment (e.g. `conda activate ./env`), run:
+
+```bash
+pip uninstall -y opencv-python opencv-python-headless opencv-contrib-python opencv-contrib-python-headless
+pip install "opencv-contrib-python==4.8.1.78"
+python -c "import cv2; cv2.setNumThreads(0); print('cv2 OK', cv2.__version__)"
+```
+
+Then start the app again with `python app.py`. Never install both
+`opencv-python` and `opencv-contrib-python` in the same environment.
+
+### `pip install` fails while building a package from source
+
+Check that the environment really is Python 3.10 (`python --version`). Some of
+the pinned wheels have no build for 3.12/3.13, so pip falls back to compiling
+them from source and fails with a Visual C++ / build error. Recreate the
+environment with Python 3.10 as shown in the setup steps above.
 
 ---
 

@@ -15,6 +15,7 @@ import cv2
 import torch
 from ultralytics.nn.tasks import DetectionModel
 import traceback
+import sys
 
 from object_detector import ObjectDetector, find_weapon_model  # FIX: use the corrected module
 from vehicle_detector import VehicleDetector
@@ -444,7 +445,7 @@ class FrameGrabber:
         # recorded clips also work.
         if isinstance(source, str) and source.strip().isdigit():
             source = int(source.strip())
-        if isinstance(source, int):
+        if isinstance(source, int) and sys.platform.startswith("win"):
             self.cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
         else:
             self.cap = cv2.VideoCapture(source)
