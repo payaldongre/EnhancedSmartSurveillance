@@ -112,6 +112,7 @@ All combined into a **live monitoring dashboard** for intelligent surveillance.
 EnhancedSmartSurveillance/
 │
 ├── app.py
+├── cameras.py                # camera list — edit this to add/remove cameras
 ├── object_detector.py        # hazardous-object detection (custom weapon model aware)
 ├── vehicle_detector.py       # vehicle detection + type/colour classification
 ├── face_detector.py          # face detection (Haar cascades, optional blur)
@@ -272,16 +273,18 @@ http://192.168.1.5:5000
 
 1. Install a free IP-camera app on the phone (e.g. **IP Webcam** on Android) and start its server — it shows a URL such as `http://192.168.1.50:8080`.
 2. Phone and PC must be on the same Wi-Fi network.
-3. Point the app at the phone's video feed:
+3. Put the phone's URL in `cameras.py` (either as the primary camera or as an extra one — see [Multiple cameras](#-multiple-cameras)), then run `python app.py`:
 
-```bat
-set CAMERA_INDEX=http://192.168.1.50:8080/video
-python app.py
+```python
+# cameras.py
+CAMERAS = [
+    {"id": "phone", "source": "http://192.168.1.50:8080/video"},
+]
 ```
 
-In PowerShell use `$env:CAMERA_INDEX="http://192.168.1.50:8080/video"` instead. Over USB, enable the app's USB/ADB mode and use its localhost URL.
+Over USB, enable the app's USB/ADB mode and use its localhost URL.
 
-RTSP cameras (`rtsp://user:pass@host:554/stream`) and recorded files (`set CAMERA_INDEX=C:\clips\demo.mp4`) work the same way — the file option is also the easiest way to test the whole pipeline without any camera at all.
+RTSP cameras (`"source": "rtsp://user:pass@host:554/stream"`) and recorded files (`"source": "C:/clips/demo.mp4"`) work the same way in `cameras.py` — the file option is also the easiest way to test the whole pipeline without any camera at all.
 
 > To use the phone **alongside** the laptop webcam, add it as an extra camera — see [Multiple cameras](#-multiple-cameras) below.
 
@@ -289,18 +292,23 @@ RTSP cameras (`rtsp://user:pass@host:554/stream`) and recorded files (`set CAMER
 
 ## 🎥 Multiple cameras
 
-Set `CAMERA_SOURCES` to a comma-separated list of cameras. The **first** entry is the analytics camera and runs the full AI pipeline; every other entry is an additional live feed shown on the same dashboard (a camera-tab strip appears above the video).
+Cameras are configured in **`cameras.py`** — edit the `CAMERAS` list, save, and run `python app.py`. No extra commands or environment variables are needed.
 
-```bat
-REM laptop webcam (index 0) = AI analytics; phone = extra live feed
-set CAMERA_SOURCES=0,phone=http://192.168.1.50:8080/video
-python app.py
+```python
+# cameras.py
+CAMERAS = [
+    {"id": "Cam_1", "source": 0, "width": 640, "height": 480},    # laptop webcam = AI analytics
+    {"id": "phone", "source": "http://192.168.1.50:8080/video"},  # extra live feed
+]
 ```
 
-- Entries are `id=source` or a bare `source` (auto-named `Cam_1`, `Cam_2`, …). Any mix works: device index, IP-Webcam/RTSP URL, or a video file.
-- The dashboard shows a tab per camera; click one to switch the feed. `GET /api/cameras` lists them all with their status.
-- **Detection runs on the first camera only.** Each detection pipeline loads its own YOLO/MediaPipe models and is CPU-bound, so running the full stack on every camera multiplies the load (and the lag). To run detection on the phone instead, put it first: `set CAMERA_SOURCES=phone=http://192.168.1.50:8080/video,0`.
-- Adding more cameras is just more entries: `set CAMERA_SOURCES=0,front=http://192.168.1.51:8080/video,rear=rtsp://user:pass@host:554/stream`.
+- The **first** entry is the analytics camera: it runs the full AI pipeline (YOLO tracking, pose, ANPR, vehicle/face detection, zones, night vision) and is the feed served at `/video_feed`.
+- Every further entry appears as an extra tab on the same dashboard — click a tab to switch the feed. `GET /api/cameras` lists them all with their status.
+- `source` accepts a device index (`0`, `1`, …), an IP-Webcam/RTSP URL, or a video-file path; `width`/`height` are optional per camera.
+- **Detection runs on the primary camera only.** Each detection pipeline loads its own YOLO/MediaPipe models and is CPU-bound, so running the full stack on every camera multiplies the load (and the lag). To switch which camera is analysed, move it to the top of the list.
+- Adding a camera is just another entry in `CAMERAS`, then restart `python app.py`.
+
+> Prefer environment variables? `CAMERA_SOURCES` (a comma-separated `id=source` list) and the legacy `CAMERA_ID` / `CAMERA_INDEX` pair still work as a fallback when `cameras.py` defines no cameras.
 
 > Want full AI detection on **every** camera at once? That is a heavier change (per-camera model instances) and roughly doubles CPU per added camera — it can be wired up, ideally on a machine with an NVIDIA GPU.
 
@@ -414,13 +422,13 @@ Each person's behavior history is tracked independently, so one person's movemen
 
 ## ⚙️ Configuration (environment variables)
 
-All optional — sensible defaults apply when unset.
+All optional — sensible defaults apply when unset. Cameras themselves are configured in **`cameras.py`**, not here; the camera variables below are only the fallback used when `cameras.py` defines no cameras.
 
 | Variable | Default | Purpose |
 | -------- | ------- | ------- |
 | `CAMERA_ID` | `Cam_1` | Identifier included in alerts / C2 events |
 | `CAMERA_INDEX` | `0` | Camera device index, **or** a video-file path / RTSP-URL string |
-| `CAMERA_SOURCES` | — | Comma-separated `id=source` list; the first runs AI detection, the rest are extra live feeds |
+| `CAMERA_SOURCES` | — | Fallback camera list (`id=source`, comma-separated); used only when `cameras.py` defines no cameras |
 | `CAMERA_WIDTH` / `CAMERA_HEIGHT` | `640` / `480` | Capture resolution (raise for wide-area/field cameras) |
 | `WEAPON_MODEL_PATH` | auto-detected | Path to a custom weapon `best.pt`; otherwise COCO is used |
 | `HAZARDOUS_LABELS` | auto | Comma-separated classes to flag as hazardous, e.g. `knife,handgun` (overrides auto-detect) |
@@ -513,7 +521,6 @@ environment with Python 3.10 as shown in the setup steps above.
 
 ## 📌 Future Scope
 
-- Multi-camera support
 - ESP32-CAM integration
 - Cloud deployment
 - SMS / Email alerts (beyond the current webhook/MQTT C2 delivery)

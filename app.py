@@ -25,6 +25,7 @@ from virtual_fence import VirtualFence
 from night_vision import NightVision
 from c2_integration import C2Client, build_event
 from event_store import EventStore
+from cameras import CAMERAS
 
 torch.serialization.add_safe_globals([DetectionModel])
 
@@ -84,46 +85,67 @@ ALERT_ON_NEW_VEHICLE = _env_flag("ALERT_ON_NEW_VEHICLE", False)
 FACE_DETECT_EVERY_N_FRAMES = int(os.environ.get("FACE_DETECT_EVERY_N_FRAMES", "5"))
 ANPR_EVERY_N_FRAMES = int(os.environ.get("ANPR_EVERY_N_FRAMES", "15"))  # used for id-less vehicles
 ANPR_MAX_NEW_PER_FRAME = int(os.environ.get("ANPR_MAX_NEW_PER_FRAME", "2"))
-CAMERA_ID = os.environ.get("CAMERA_ID", "Cam_1")
-# Camera source: a device index ("0", "1", ...) or a video-file path / RTSP-URL
-# string. Resolution is applied on a best-effort basis (the driver may pick the
-# nearest supported size). Raise these for wide-area/field cameras.
-CAMERA_INDEX = os.environ.get("CAMERA_INDEX", "0")
-CAMERA_WIDTH = int(os.environ.get("CAMERA_WIDTH", "640"))
-CAMERA_HEIGHT = int(os.environ.get("CAMERA_HEIGHT", "480"))
-
-# Multi-camera: CAMERA_SOURCES is a comma-separated list of `id=source` (or bare
-# `source`) entries. The FIRST entry is the analytics camera and runs the full
-# AI pipeline; every further entry is an additional live feed shown on the same
-# dashboard. Entries look like "0,phone=http://192.168.1.50:8080/video".
-# When CAMERA_SOURCES is unset, the legacy CAMERA_ID / CAMERA_INDEX pair is used.
-CAMERA_SOURCES = os.environ.get("CAMERA_SOURCES", "").strip()
+# Camera list. The cameras live in cameras.py so you can add/remove them in
+# code (no `set` command needed); the FIRST entry is the analytics camera that
+# runs the full AI pipeline, and any further entries stream live to the same
+# dashboard. See cameras.py for the entry format.
+#
+# Fallbacks, used only when cameras.py defines no cameras:
+#   CAMERA_SOURCES (comma-separated `id=source` entries), then the legacy
+#   CAMERA_ID / CAMERA_INDEX pair.
+DEFAULT_CAMERA_WIDTH = int(os.environ.get("CAMERA_WIDTH", "640"))
+DEFAULT_CAMERA_HEIGHT = int(os.environ.get("CAMERA_HEIGHT", "480"))
 
 
-def _parse_extra_cameras():
-    """Return (primary_entry_or_None, [(id, source), ...] for the extras)."""
-    if not CAMERA_SOURCES:
-        return None, []
+def _camera_entries_from_env():
+    """Build the fallback camera list from CAMERA_SOURCES / CAMERA_INDEX."""
     entries = []
-    for entry in CAMERA_SOURCES.split(","):
-        entry = entry.strip()
-        if not entry:
-            continue
-        if "=" in entry:
-            cid, src = entry.split("=", 1)
-            cid, src = cid.strip(), src.strip()
-        else:
-            cid, src = "", entry
-        entries.append((cid or f"Cam_{len(entries) + 1}", src))
+    sources = os.environ.get("CAMERA_SOURCES", "").strip()
+    if sources:
+        for token in sources.split(","):
+            token = token.strip()
+            if not token:
+                continue
+            if "=" in token:
+                cid, src = token.split("=", 1)
+                cid, src = cid.strip(), src.strip()
+            else:
+                cid, src = "", token
+            entries.append({"id": cid or f"Cam_{len(entries) + 1}", "source": src})
     if not entries:
-        return None, []
+        entries.append({"id": os.environ.get("CAMERA_ID", "Cam_1"),
+                        "source": os.environ.get("CAMERA_INDEX", "0")})
+    return entries
+
+
+def _camera_entries():
+    """Resolve every camera to a dict of id/source/width/height.
+
+    cameras.py wins when it defines any camera; otherwise the env fallbacks
+    keep the previous single-camera behavior working unchanged.
+    """
+    raw = list(CAMERAS) if CAMERAS else _camera_entries_from_env()
+    entries = []
+    for cam in raw:
+        if not isinstance(cam, dict) or "source" not in cam:
+            continue
+        entries.append({
+            "id": str(cam.get("id") or f"Cam_{len(entries) + 1}"),
+            "source": cam["source"],
+            "width": int(cam.get("width") or DEFAULT_CAMERA_WIDTH),
+            "height": int(cam.get("height") or DEFAULT_CAMERA_HEIGHT),
+        })
+    if not entries:
+        entries.append({"id": "Cam_1", "source": "0",
+                        "width": DEFAULT_CAMERA_WIDTH, "height": DEFAULT_CAMERA_HEIGHT})
     return entries[0], entries[1:]
 
 
-_PRIMARY_ENTRY, _EXTRA_CAMERAS = _parse_extra_cameras()
-if _PRIMARY_ENTRY:
-    # The first CAMERA_SOURCES entry overrides the legacy single-camera pair.
-    CAMERA_ID, CAMERA_INDEX = _PRIMARY_ENTRY[0], _PRIMARY_ENTRY[1]
+_PRIMARY_CAMERA, _EXTRA_CAMERAS = _camera_entries()
+CAMERA_ID = _PRIMARY_CAMERA["id"]
+CAMERA_INDEX = _PRIMARY_CAMERA["source"]
+CAMERA_WIDTH = _PRIMARY_CAMERA["width"]
+CAMERA_HEIGHT = _PRIMARY_CAMERA["height"]
 
 # FIX: detect device BEFORE creating either model, so both can be told
 # explicitly which device to use rather than relying on Ultralytics' auto-detect.
@@ -174,9 +196,6 @@ print(f"ANPR backend: {anpr_reader.backend} | Faces: "
 if ENABLE_VIRTUAL_FENCE and not virtual_fence.list_zones():
     print("[VirtualFence] WARNING: no zones loaded — the virtual fence will not fire. "
           "Add one via zones.json or POST /api/zones.")
-_STREAM_CAMERAS = [StreamCamera(cid, src, CAMERA_WIDTH, CAMERA_HEIGHT)
-                   for cid, src in _EXTRA_CAMERAS]
-_STREAM_BY_ID = {cam.id: cam for cam in _STREAM_CAMERAS}
 
 
 def _camera_listing():
@@ -612,6 +631,13 @@ class StreamCamera:
             'running': self.running and self.latest_frame is not None,
             'fps': round(self.fps, 1),
         }
+
+
+# Build the extra (live-only) cameras now that StreamCamera is defined. The
+# primary camera's analytics pipeline is started from __main__ below.
+_STREAM_CAMERAS = [StreamCamera(cam["id"], cam["source"], cam["width"], cam["height"])
+                   for cam in _EXTRA_CAMERAS]
+_STREAM_BY_ID = {cam.id: cam for cam in _STREAM_CAMERAS}
 
 
 def video_processing_thread():

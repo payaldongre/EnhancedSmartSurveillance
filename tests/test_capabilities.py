@@ -449,6 +449,21 @@ class AppWiringTests(unittest.TestCase):
         for module in ["vehicle_detector", "face_detector", "anpr", "virtual_fence",
                        "night_vision", "c2_integration", "event_store"]:
             self.assertIn(f"from {module} import", self.app_src, module)
+        self.assertIn("from cameras import", self.app_src)
+
+    def test_stream_cameras_built_after_the_class_is_defined(self):
+        """_STREAM_CAMERAS must be created after StreamCamera exists (NameError guard)."""
+        tree = ast.parse(self.app_src)
+        class_lines = [n.lineno for n in tree.body
+                       if isinstance(n, ast.ClassDef) and n.name == "StreamCamera"]
+        self.assertTrue(class_lines, "StreamCamera class is missing from app.py")
+        assign_lines = [n.lineno for n in tree.body
+                        if isinstance(n, ast.Assign)
+                        and any(isinstance(t, ast.Name) and t.id == "_STREAM_CAMERAS"
+                                for t in n.targets)]
+        self.assertTrue(assign_lines, "_STREAM_CAMERAS is never built in app.py")
+        self.assertGreater(min(assign_lines), min(class_lines),
+                           "_STREAM_CAMERAS is built before StreamCamera is defined")
 
     def test_app_only_uses_attributes_that_exist(self):
         used = {}

@@ -1147,14 +1147,19 @@
             }
         }, 2000);
         
+        let activeCameraId = null;
+
         function loadCameras() {
             fetch('/api/cameras')
                 .then(response => response.json())
                 .then(data => {
                     const tabs = document.getElementById('camera-tabs');
                     if (!tabs || !data.cameras || data.cameras.length < 2) return;
+                    const defaultCam = data.cameras.find(c => c.detect) || data.cameras[0];
+                    const selected = activeCameraId || defaultCam.camera_id;
                     tabs.innerHTML = data.cameras.map(c =>
-                        `<button class="camera-tab${c.detect ? ' active' : ''}" ` +
+                        `<button class="camera-tab${c.camera_id === selected ? ' active' : ''}" ` +
+                        `data-camera="${c.camera_id}" ` +
                         `onclick="selectCamera('${c.camera_id}')">` +
                         `${c.camera_id}${c.detect ? ' • AI' : ''}</button>`
                     ).join('');
@@ -1163,7 +1168,11 @@
         }
 
         function selectCamera(cameraId) {
+            activeCameraId = cameraId;
             document.getElementById('video-feed').src = '/video_feed/' + encodeURIComponent(cameraId);
+            document.querySelectorAll('.camera-tab').forEach(function (btn) {
+                btn.classList.toggle('active', btn.getAttribute('data-camera') === cameraId);
+            });
         }
 
         // Initial load
